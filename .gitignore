@@ -1,0 +1,4 @@
+.env
+minecraft-auth/
+node_modules/
+bdt.json
