@@ -9,288 +9,414 @@ const {
   ButtonStyle
 } = require("discord.js");
 
-const fs = require("fs");
+const {
+  spawn
+} = require("child_process");
+
 const path = require("path");
-const { spawn, exec } = require("child_process");
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const OWNER_ID = process.env.DISCORD_OWNER_ID;
+const TOKEN =
+  process.env.DISCORD_TOKEN;
 
-const DATABASE_FILE = path.join(
-  __dirname,
-  "bdt.json"
-);
+const OWNER_ID =
+  process.env.DISCORD_OWNER_ID;
 
-const MINECRAFT_FILE = path.join(
-  __dirname,
-  "index.js"
-);
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+const client =
+  new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent
+    ]
+  });
 
 let minecraftProcess = null;
-let activeCheck = false;
-let currentPanelMessage = null;
-let bdtSaveDetected = false;
+let panelMessage = null;
+
+let afkActive = false;
+let minecraftOnline = false;
+let minecraftConnecting = false;
+
+let sessionStarted = null;
+let lastAction = "Noch keine";
+let position = "Unbekannt";
+
+let statistics = {
+  movements: 0,
+  jumps: 0,
+  reconnects: 0,
+  disconnects: 0
+};
+
+let reconnectTimeout = null;
 
 console.log("");
 console.log("========================================");
-console.log("        BDT DISCORD BOT");
+console.log("        AFK DISCORD BOT");
 console.log("========================================");
 console.log("");
 
-client.once("clientReady", () => {
-  console.log(
-    "[DISCORD] Bot online: " +
-      client.user.tag
-  );
-
-  console.log(
-    "[DISCORD] Warte auf Befehle..."
-  );
-});
-
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) {
-    return;
-  }
-
-  if (!message.content.startsWith("!")) {
-    return;
-  }
-
-  const args =
-    message.content
-      .slice(1)
-      .trim()
-      .split(/\s+/);
-
-  const command =
-    args
-      .shift()
-      ?.toLowerCase();
-
-  if (command === "bdt") {
+client.once(
+  "clientReady",
+  () => {
     console.log(
-      "[DISCORD] !bdt erkannt."
+      "[DISCORD] Bot online: " +
+      client.user.tag
     );
 
-    await sendBDTPanel(
+    console.log(
+      "[DISCORD] Schreibe !afk"
+    );
+  }
+);
+
+client.on(
+  "messageCreate",
+  async message => {
+
+    if (
+      message.author.bot
+    ) {
+      return;
+    }
+
+    if (
+      message.content
+        .trim()
+        .toLowerCase() !== "!afk"
+    ) {
+      return;
+    }
+
+    if (
+      OWNER_ID &&
+      message.author.id !== OWNER_ID
+    ) {
+      await message.reply(
+        "Du hast keine Berechtigung für den AFK Bot."
+      );
+
+      return;
+    }
+
+    await sendPanel(
       message.channel
     );
-
-    return;
   }
-});
+);
 
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) {
-    return;
+client.on(
+  "interactionCreate",
+  async interaction => {
+
+    if (
+      !interaction.isButton()
+    ) {
+      return;
+    }
+
+    if (
+      OWNER_ID &&
+      interaction.user.id !== OWNER_ID
+    ) {
+      await interaction.reply({
+        content:
+          "Du hast keine Berechtigung.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_start"
+    ) {
+      await startAFK(
+        interaction
+      );
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_stop"
+    ) {
+      await stopAFK(
+        interaction
+      );
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_reconnect"
+    ) {
+      await reconnectMinecraft(
+        interaction
+      );
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_refresh"
+    ) {
+      await interaction.deferUpdate();
+
+      await updatePanel();
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_position"
+    ) {
+      await interaction.reply({
+        content:
+          "📍 Position: " +
+          position,
+        ephemeral: true
+      });
+
+      return;
+    }
   }
+);
 
-  const customId =
-    interaction.customId;
-
-  console.log(
-    "[DISCORD] Button: " +
-      customId
-  );
-
-  const geschuetzt =
-    customId === "bdt_pruefen" ||
-    customId === "bdt_neu";
-
-  if (
-    geschuetzt &&
-    interaction.user.id !== OWNER_ID
-  ) {
-    await interaction.reply({
-      content:
-        "❌ Du hast dafür keine Berechtigung.",
-      ephemeral: true
-    });
-
-    console.log(
-      "[AUTH] Zugriff verweigert für " +
-        interaction.user.tag +
-        " (" +
-        interaction.user.id +
-        ")"
-    );
-
-    return;
-  }
-
-  if (
-    customId === "bdt_pruefen" ||
-    customId === "bdt_neu"
-  ) {
-    await handleBDTCheck(
-      interaction
-    );
-
-    return;
-  }
-
-  if (
-    customId === "bdt_letzter"
-  ) {
-    await handleLastBDT(
-      interaction
-    );
-
-    return;
-  }
-});
-
-async function handleBDTCheck(
+async function startAFK(
   interaction
 ) {
-  if (activeCheck) {
+
+  if (
+    afkActive
+  ) {
     await interaction.reply({
       content:
-        "⏳ Der Minecraft Account führt bereits einen BDT Check durch.",
+        "Der AFK Bot läuft bereits.",
       ephemeral: true
     });
 
     return;
   }
+
+  resetStatistics();
+
+  afkActive = true;
+  minecraftOnline = false;
+  minecraftConnecting = true;
+
+  sessionStarted =
+    Date.now();
+
+  lastAction =
+    "Minecraft wird gestartet";
+
+  console.log("");
+  console.log("========================================");
+  console.log("        AFK SESSION START");
+  console.log("========================================");
+  console.log("");
+
+  startMinecraftProcess();
 
   await interaction.reply({
     content:
-      "🧱 Der Minecraft Account wird gestartet und führt den BDT Check durch.",
+      "🟢 AFK Bot wird gestartet.",
     ephemeral: true
   });
 
-  console.log("");
-  console.log("========================================");
-  console.log("        MINECRAFT CHECK START");
-  console.log("========================================");
-  console.log("");
-
-  currentPanelMessage =
-    interaction.message;
-
-  startMinecraftCheck(
-    interaction.message
-  );
+  await updatePanel();
 }
 
-function startMinecraftCheck(
-  panelMessage
+async function stopAFK(
+  interaction
 ) {
-  if (activeCheck) {
-    return;
-  }
-
-  activeCheck = true;
-  bdtSaveDetected = false;
-
-  console.log(
-    "[MC] Starte index.js..."
-  );
 
   if (
-    !fs.existsSync(
-      MINECRAFT_FILE
-    )
+    !afkActive
   ) {
-    console.error(
-      "[MC] index.js wurde nicht gefunden."
-    );
+    await interaction.reply({
+      content:
+        "Der AFK Bot läuft momentan nicht.",
+      ephemeral: true
+    });
 
-    activeCheck = false;
     return;
   }
+
+  afkActive = false;
+  minecraftOnline = false;
+  minecraftConnecting = false;
+
+  lastAction =
+    "AFK Bot gestoppt";
+
+  clearReconnectTimeout();
+
+  stopMinecraftProcess();
+
+  await interaction.reply({
+    content:
+      "🔴 AFK Bot wurde gestoppt.",
+    ephemeral: true
+  });
+
+  await updatePanel();
+}
+
+async function reconnectMinecraft(
+  interaction
+) {
+
+  if (
+    !afkActive
+  ) {
+    await interaction.reply({
+      content:
+        "Der AFK Bot ist nicht aktiv.",
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  statistics.reconnects++;
+
+  lastAction =
+    "Manueller Reconnect";
+
+  minecraftOnline = false;
+  minecraftConnecting = true;
+
+  stopMinecraftProcess();
+
+  await interaction.reply({
+    content:
+      "🔄 Minecraft wird neu verbunden.",
+    ephemeral: true
+  });
+
+  clearReconnectTimeout();
+
+  reconnectTimeout =
+    setTimeout(
+      () => {
+
+        reconnectTimeout =
+          null;
+
+        if (
+          !afkActive
+        ) {
+          return;
+        }
+
+        startMinecraftProcess();
+
+      },
+      3000
+    );
+
+  await updatePanel();
+}
+
+function startMinecraftProcess() {
+
+  if (
+    minecraftProcess
+  ) {
+    console.log(
+      "[MC] Prozess läuft bereits."
+    );
+
+    return;
+  }
+
+  const minecraftFile =
+    path.join(
+      __dirname,
+      "index.js"
+    );
+
+  console.log(
+    "[MC] Starte Minecraft Prozess:"
+  );
+
+  console.log(
+    minecraftFile
+  );
+
+  minecraftConnecting =
+    true;
+
+  minecraftOnline =
+    false;
+
+  lastAction =
+    "Verbinde mit GrieferGames";
 
   minecraftProcess =
     spawn(
       process.execPath,
       [
-        MINECRAFT_FILE
+        minecraftFile
       ],
       {
         cwd:
           __dirname,
+
         env:
           process.env,
-        stdio:
-          [
-            "ignore",
-            "pipe",
-            "pipe"
-          ],
-        windowsHide:
-          true
+
+        stdio: [
+          "pipe",
+          "pipe",
+          "pipe"
+        ]
       }
     );
 
-  console.log(
-    "[MC] Prozess gestartet. PID: " +
-      minecraftProcess.pid
-  );
-
   minecraftProcess.stdout.on(
     "data",
-    async (data) => {
+    data => {
+
       const output =
         data.toString();
 
       process.stdout.write(
         "[MC] " +
-          output
+        output
       );
 
-      if (
-        !bdtSaveDetected &&
-        output.includes(
-          "BDT GESPEICHERT"
-        )
-      ) {
-        bdtSaveDetected = true;
-
-        console.log("");
-        console.log(
-          "[MC] BDT Speicherung erkannt."
-        );
-
-        await updatePanel(
-          panelMessage
-        );
-
-        console.log(
-          "[MC] Warte 2 Sekunden und beende den Minecraft Prozess."
-        );
-
-        setTimeout(() => {
-          stopMinecraftCheck();
-        }, 2000);
-      }
+      parseMinecraftOutput(
+        output
+      );
     }
   );
 
   minecraftProcess.stderr.on(
     "data",
-    (data) => {
+    data => {
+
       const output =
         data.toString();
 
       process.stderr.write(
         "[MC ERROR] " +
-          output
+        output
       );
     }
   );
 
   minecraftProcess.on(
     "error",
-    (error) => {
+    error => {
+
       console.error(
         "[MC] Prozessfehler:"
       );
@@ -299,14 +425,29 @@ function startMinecraftCheck(
         error
       );
 
-      activeCheck = false;
-      minecraftProcess = null;
+      minecraftProcess =
+        null;
+
+      minecraftOnline =
+        false;
+
+      minecraftConnecting =
+        false;
+
+      if (
+        afkActive
+      ) {
+        scheduleReconnect();
+      }
+
+      updatePanel();
     }
   );
 
   minecraftProcess.on(
     "exit",
     (code, signal) => {
+
       console.log("");
       console.log(
         "[MC] Minecraft Prozess beendet."
@@ -314,101 +455,69 @@ function startMinecraftCheck(
 
       console.log(
         "[MC] Code: " +
-          code
+        code
       );
 
       console.log(
         "[MC] Signal: " +
-          signal
+        signal
       );
 
-      activeCheck = false;
-      minecraftProcess = null;
-      currentPanelMessage = null;
+      minecraftProcess =
+        null;
+
+      minecraftOnline =
+        false;
+
+      minecraftConnecting =
+        false;
+
+      if (
+        afkActive
+      ) {
+
+        statistics.disconnects++;
+
+        lastAction =
+          "Minecraft Verbindung beendet";
+
+        scheduleReconnect();
+
+      } else {
+
+        lastAction =
+          "Minecraft beendet";
+      }
+
+      updatePanel();
     }
   );
 }
 
-function stopMinecraftCheck() {
+function stopMinecraftProcess() {
+
+  clearReconnectTimeout();
+
   if (
     !minecraftProcess
   ) {
-    activeCheck = false;
     return;
   }
-
-  const pid =
-    minecraftProcess.pid;
-
-  if (!pid) {
-    activeCheck = false;
-    minecraftProcess = null;
-    return;
-  }
-
-  console.log("");
-  console.log("========================================");
-  console.log("        MINECRAFT BOT BEENDEN");
-  console.log("========================================");
-  console.log("");
 
   console.log(
-    "[MC] PID: " +
-      pid
+    "[MC] Beende Minecraft Prozess."
   );
 
-  if (
-    process.platform === "win32"
-  ) {
-    exec(
-      `taskkill /PID ${pid} /T /F`,
-      (error, stdout, stderr) => {
-
-        if (error) {
-          console.error(
-            "[MC] taskkill Fehler:"
-          );
-
-          console.error(
-            error
-          );
-
-          console.error(
-            stderr
-          );
-
-          return;
-        }
-
-        console.log(
-          "[MC] Minecraft Prozessbaum erfolgreich beendet."
-        );
-
-        if (stdout) {
-          console.log(
-            stdout.trim()
-          );
-        }
-
-        activeCheck = false;
-        minecraftProcess = null;
-        currentPanelMessage = null;
-      }
-    );
-
-    return;
-  }
-
   try {
+
     minecraftProcess.kill(
       "SIGTERM"
     );
 
-    console.log(
-      "[MC] Prozess beendet."
-    );
+  } catch (
+    error
+  ) {
 
-  } catch (error) {
     console.error(
       "[MC] Fehler beim Beenden:"
     );
@@ -418,194 +527,390 @@ function stopMinecraftCheck() {
     );
   }
 
-  activeCheck = false;
-  minecraftProcess = null;
-  currentPanelMessage = null;
+  minecraftProcess =
+    null;
+
+  minecraftOnline =
+    false;
+
+  minecraftConnecting =
+    false;
 }
 
-async function handleLastBDT(
-  interaction
-) {
-  const data =
-    loadBDTData();
+function scheduleReconnect() {
 
-  if (!data) {
-    await interaction.reply({
-      content:
-        "📅 Es wurde bisher noch kein BDT gespeichert.",
-      ephemeral: true
-    });
-
+  if (
+    !afkActive
+  ) {
     return;
   }
 
-  const embed =
-    createBDTEmbed(
-      data
-    );
+  if (
+    reconnectTimeout
+  ) {
+    return;
+  }
 
-  await interaction.reply({
-    embeds: [
-      embed
-    ],
-    ephemeral: true
-  });
+  lastAction =
+    "Reconnect in 10 Sekunden";
+
+  updatePanel();
+
+  reconnectTimeout =
+    setTimeout(
+      () => {
+
+        reconnectTimeout =
+          null;
+
+        if (
+          !afkActive
+        ) {
+          return;
+        }
+
+        statistics.reconnects++;
+
+        lastAction =
+          "Automatischer Reconnect";
+
+        startMinecraftProcess();
+
+      },
+      10000
+    );
 }
 
-async function updatePanel(
-  panelMessage
-) {
-  try {
-    if (!panelMessage) {
-      return;
-    }
+function clearReconnectTimeout() {
 
-    const data =
-      loadBDTData();
+  if (
+    reconnectTimeout
+  ) {
 
-    if (!data) {
-      console.log(
-        "[DISCORD] Keine BDT Daten gefunden."
-      );
-
-      return;
-    }
-
-    const embed =
-      createBDTEmbed(
-        data
-      );
-
-    const buttons =
-      createButtons();
-
-    await panelMessage.edit({
-      embeds: [
-        embed
-      ],
-      components: [
-        buttons
-      ]
-    });
-
-    console.log(
-      "[DISCORD] BDT Panel aktualisiert."
+    clearTimeout(
+      reconnectTimeout
     );
 
-  } catch (error) {
-    console.error(
-      "[DISCORD] Panel Fehler:"
-    );
-
-    console.error(
-      error
-    );
+    reconnectTimeout =
+      null;
   }
 }
 
-async function sendBDTPanel(
+function parseMinecraftOutput(
+  output
+) {
+
+  const lines =
+    output
+      .split("\n")
+      .map(
+        line =>
+          line.trim()
+      )
+      .filter(
+        line =>
+          line.length > 0
+      );
+
+  for (
+    const line of lines
+  ) {
+
+    if (
+      !line.startsWith(
+        "AFK_STATUS:"
+      )
+    ) {
+      continue;
+    }
+
+    const json =
+      line.substring(
+        "AFK_STATUS:".length
+      );
+
+    try {
+
+      const data =
+        JSON.parse(
+          json
+        );
+
+      if (
+        data.online !==
+        undefined
+      ) {
+        minecraftOnline =
+          data.online;
+      }
+
+      if (
+        data.connecting !==
+        undefined
+      ) {
+        minecraftConnecting =
+          data.connecting;
+      }
+
+      if (
+        data.position
+      ) {
+        position =
+          data.position;
+      }
+
+      if (
+        data.action
+      ) {
+        lastAction =
+          data.action;
+      }
+
+      if (
+        data.movements !==
+        undefined
+      ) {
+        statistics.movements =
+          data.movements;
+      }
+
+      if (
+        data.jumps !==
+        undefined
+      ) {
+        statistics.jumps =
+          data.jumps;
+      }
+
+      updatePanel();
+
+    } catch (
+      error
+    ) {
+
+      console.log(
+        "[DISCORD] Status konnte nicht gelesen werden."
+      );
+    }
+  }
+}
+
+function resetStatistics() {
+
+  statistics = {
+    movements: 0,
+    jumps: 0,
+    reconnects: 0,
+    disconnects: 0
+  };
+
+  sessionStarted =
+    Date.now();
+
+  position =
+    "Unbekannt";
+
+  lastAction =
+    "Neue Session";
+}
+
+async function sendPanel(
   channel
 ) {
-  const data =
-    loadBDTData();
-
-  const embed =
-    createBDTEmbed(
-      data || {}
-    );
-
-  const buttons =
-    createButtons();
 
   const message =
     await channel.send({
       embeds: [
-        embed
+        createEmbed()
       ],
       components: [
-        buttons
+        createButtons()
       ]
     });
 
-  console.log(
-    "[DISCORD] BDT Panel gesendet."
-  );
+  panelMessage =
+    message;
 
-  return message;
+  console.log(
+    "[DISCORD] AFK Panel erstellt."
+  );
 }
 
-function createBDTEmbed(
-  data
-) {
-  const block =
-    data &&
-    data.block
-      ? data.block
-      : "Noch nicht geprüft";
+async function updatePanel() {
 
-  const belohnung =
-    data &&
-    data.belohnung
-      ? data.belohnung
-      : "Noch nicht geprüft";
+  if (
+    !panelMessage
+  ) {
+    return;
+  }
 
-  const datum =
-    data &&
-    data.datum
-      ? formatDatum(
-          data.datum
-        )
-      : "Noch keine";
+  try {
+
+    await panelMessage.edit({
+      embeds: [
+        createEmbed()
+      ],
+      components: [
+        createButtons()
+      ]
+    });
+
+  } catch (
+    error
+  ) {
+
+    console.log(
+      "[DISCORD] Panel konnte nicht aktualisiert werden."
+    );
+  }
+}
+
+function createEmbed() {
 
   return new EmbedBuilder()
     .setTitle(
-      "🧱 Block des Tages"
+      "🤖 AFK Bot"
+    )
+    .setDescription(
+      "GrieferGames AFK Kontrollzentrum"
     )
     .addFields(
       {
         name:
-          "🧱 Block",
+          "📡 Status",
+
         value:
-          block,
+          getStatus(),
+
         inline:
           true
       },
       {
         name:
-          "🎁 Belohnung",
+          "🌐 Server",
+
         value:
-          belohnung,
+          "GrieferGames",
+
         inline:
           true
       },
       {
         name:
-          "⏰ Letzte Prüfung",
+          "🔌 Verbindung",
+
         value:
-          datum,
+          getConnection(),
+
+        inline:
+          true
+      },
+      {
+        name:
+          "📍 Position",
+
+        value:
+          position,
+
+        inline:
+          false
+      },
+      {
+        name:
+          "⏱️ Laufzeit",
+
+        value:
+          getUptime(),
+
+        inline:
+          true
+      },
+      {
+        name:
+          "⚡ Letzte Aktion",
+
+        value:
+          lastAction,
+
+        inline:
+          true
+      },
+      {
+        name:
+          "📊 AFK Statistik",
+
+        value:
+          [
+            "Bewegungen: **" +
+            statistics.movements +
+            "**",
+
+            "Sprünge: **" +
+            statistics.jumps +
+            "**",
+
+            "Reconnects: **" +
+            statistics.reconnects +
+            "**",
+
+            "Disconnects: **" +
+            statistics.disconnects +
+            "**"
+          ].join("\n"),
+
         inline:
           false
       }
     )
     .setFooter({
       text:
-        "BlitzControl • BDT"
+        "AFK Control"
     })
     .setTimestamp();
 }
 
 function createButtons() {
+
   return new ActionRowBuilder()
     .addComponents(
+
       new ButtonBuilder()
         .setCustomId(
-          "bdt_pruefen"
+          "afk_start"
         )
         .setLabel(
-          "BDT prüfen"
+          "AFK Start"
         )
         .setEmoji(
-          "🧱"
+          "🟢"
+        )
+        .setStyle(
+          ButtonStyle.Success
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_stop"
+        )
+        .setLabel(
+          "AFK Stopp"
+        )
+        .setEmoji(
+          "🔴"
+        )
+        .setStyle(
+          ButtonStyle.Danger
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_reconnect"
+        )
+        .setLabel(
+          "Reconnect"
+        )
+        .setEmoji(
+          "🔄"
         )
         .setStyle(
           ButtonStyle.Primary
@@ -613,13 +918,13 @@ function createButtons() {
 
       new ButtonBuilder()
         .setCustomId(
-          "bdt_letzter"
+          "afk_position"
         )
         .setLabel(
-          "Letzten BDT"
+          "Position"
         )
         .setEmoji(
-          "📅"
+          "📍"
         )
         .setStyle(
           ButtonStyle.Secondary
@@ -627,100 +932,118 @@ function createButtons() {
 
       new ButtonBuilder()
         .setCustomId(
-          "bdt_neu"
+          "afk_refresh"
         )
         .setLabel(
-          "Neu prüfen"
+          "Aktualisieren"
         )
         .setEmoji(
-          "🔄"
+          "📊"
         )
         .setStyle(
-          ButtonStyle.Success
+          ButtonStyle.Secondary
         )
     );
 }
 
-function loadBDTData() {
+function getStatus() {
+
   if (
-    !fs.existsSync(
-      DATABASE_FILE
-    )
+    afkActive &&
+    minecraftOnline
   ) {
-    return null;
+    return "🟢 **AFK AKTIV**";
   }
 
-  try {
-    const content =
-      fs.readFileSync(
-        DATABASE_FILE,
-        "utf8"
-      );
-
-    const database =
-      JSON.parse(
-        content
-      );
-
-    if (
-      !database ||
-      !Array.isArray(
-        database.eintraege
-      ) ||
-      database.eintraege.length === 0
-    ) {
-      return null;
-    }
-
-    return database.eintraege[
-      database.eintraege.length - 1
-    ];
-
-  } catch (error) {
-    console.error(
-      "[BDT] Datenbank Fehler:"
-    );
-
-    console.error(
-      error
-    );
-
-    return null;
+  if (
+    afkActive &&
+    minecraftConnecting
+  ) {
+    return "🟡 **VERBINDET**";
   }
+
+  return "🔴 **OFFLINE**";
 }
 
-function formatDatum(
-  datum
-) {
-  const teile =
-    datum.split("-");
+function getConnection() {
 
   if (
-    teile.length !== 3
+    minecraftOnline
   ) {
-    return datum;
+    return "🟢 Online";
   }
+
+  if (
+    minecraftConnecting
+  ) {
+    return "🟡 Verbindung...";
+  }
+
+  return "🔴 Offline";
+}
+
+function getUptime() {
+
+  if (
+    !sessionStarted
+  ) {
+    return "00:00:00";
+  }
+
+  return formatDuration(
+    Date.now() -
+    sessionStarted
+  );
+}
+
+function formatDuration(
+  milliseconds
+) {
+
+  let seconds =
+    Math.floor(
+      milliseconds / 1000
+    );
+
+  const hours =
+    Math.floor(
+      seconds / 3600
+    );
+
+  seconds =
+    seconds % 3600;
+
+  const minutes =
+    Math.floor(
+      seconds / 60
+    );
+
+  seconds =
+    seconds % 60;
 
   return (
-    teile[2] +
-    "." +
-    teile[1] +
-    "." +
-    teile[0]
+    String(hours).padStart(
+      2,
+      "0"
+    ) +
+    ":" +
+    String(minutes).padStart(
+      2,
+      "0"
+    ) +
+    ":" +
+    String(seconds).padStart(
+      2,
+      "0"
+    )
   );
 }
 
-if (!TOKEN) {
+if (
+  !TOKEN
+) {
   console.error(
-    "FEHLER: DISCORD_TOKEN fehlt."
-  );
-
-  process.exit(1);
-}
-
-if (!OWNER_ID) {
-  console.error(
-    "FEHLER: DISCORD_OWNER_ID fehlt."
+    "DISCORD_TOKEN fehlt."
   );
 
   process.exit(1);
