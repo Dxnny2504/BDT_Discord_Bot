@@ -1,1059 +1,1253 @@
-const mineflayer = require("mineflayer");
-const fs = require("fs");
-const path = require("path");
+require("dotenv").config();
+
 const {
-  pathfinder,
-  Movements,
-  goals
-} = require("mineflayer-pathfinder");
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require("discord.js");
 
-const bot = mineflayer.createBot({
-  host: "griefergames.net",
-  port: 25565,
-  username: "r.guse858@gmail.com",
-  auth: "microsoft",
-  version: "1.8.9",
-  profilesFolder: "./minecraft-auth"
+const mineflayer = require("mineflayer");
+
+const TOKEN = process.env.DISCORD_TOKEN;
+const OWNER_ID = process.env.DISCORD_OWNER_ID;
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-bot.loadPlugin(pathfinder);
+let mcBot = null;
+let panelMessage = null;
 
-const DATABASE_FILE = path.join(
-  __dirname,
-  "bdt.json"
-);
+let afkActive = false;
+let mcOnline = false;
+let mcConnecting = false;
+let reconnecting = false;
 
-let portalRoomReached = false;
-let citybuildReached = false;
-let homeCommandSent = false;
-let npcSearchStarted = false;
-let npcClicked = false;
-let bdtMenuRead = false;
+let sessionStarted = null;
+let lastActivity = null;
+let lastAction = "Keine Aktion";
+let currentPosition = "Unbekannt";
 
+let movementTimer = null;
+let jumpTimer = null;
+let positionTimer = null;
+let reconnectTimer = null;
+
+let statistics = {
+  movements: 0,
+  jumps: 0,
+  reconnects: 0,
+  disconnects: 0
+};
+
+console.log("");
 console.log("========================================");
-console.log("        BDT BOT STARTET");
-console.log("        MINECRAFT 1.8.9");
+console.log("        GRIEFERGAMES AFK BOT");
 console.log("========================================");
+console.log("");
 
-initializeDatabase();
-
-bot.once("login", () => {
-  console.log("");
-  console.log("Minecraft Login erfolgreich.");
-  console.log("GrieferGames Verbindung hergestellt.");
-  console.log("");
-});
-
-bot.once("spawn", () => {
-  console.log("");
-  console.log("========================================");
-  console.log("        BOT IM HUB");
-  console.log("========================================");
-  console.log("");
-
-  printPosition("HUB");
-
-  const movements = new Movements(bot);
-
-  movements.canDig = false;
-  movements.allow1by1towers = false;
-  movements.allowParkour = true;
-  movements.allowSprinting = true;
-
-  bot.pathfinder.setMovements(movements);
-
-  setTimeout(() => {
-    console.log("");
-    console.log("[PORTAL] Sende /portal...");
-    bot.chat("/portal");
-  }, 3000);
-});
-
-bot.on("respawn", () => {
-  console.log("");
-  console.log("========================================");
-  console.log("        RESPAWN ERKANNT");
-  console.log("========================================");
-  console.log("");
-
-  printPosition("RESPAWN");
-
-  if (!portalRoomReached) {
-    portalRoomReached = true;
-
-    console.log(
-      "[PORTAL] Warte auf die Portalraum Position..."
-    );
-
-    setTimeout(() => {
-      startPortalRouteCheck();
-    }, 3000);
-
-    return;
-  }
-
-  if (!citybuildReached) {
-    citybuildReached = true;
-
-    bot.pathfinder.stop();
-    bot.clearControlStates();
-
-    console.log("");
-    console.log("========================================");
-    console.log("        CITYBUILD ERREICHT");
-    console.log("========================================");
-    console.log("");
-
-    printPosition("CITYBUILD");
-
-    console.log(
-      "[CB6] Sende /home 55..."
-    );
-
-    setTimeout(() => {
-      sendHomeCommand();
-    }, 3000);
-  }
-});
-
-bot.on("messagestr", (message) => {
-  console.log("[CHAT] " + message);
-});
-
-bot.on("windowOpen", (window) => {
-  console.log("");
-  console.log("========================================");
-  console.log("        MENÜ GEÖFFNET");
-  console.log("========================================");
-  console.log("");
-
+client.once("clientReady", () => {
   console.log(
-    "[WINDOW] Typ: " +
-      window.type
+    "[DISCORD] Bot online: " +
+    client.user.tag
   );
 
   console.log(
-    "[WINDOW] Titel: " +
-      cleanText(window.title)
-  );
-
-  console.log(
-    "[WINDOW] Slots: " +
-      window.slots.length
-  );
-
-  if (
-    cleanText(window.title)
-      .toLowerCase()
-      .includes("block des tages")
-  ) {
-    console.log(
-      "[BDT] Echtes BDT Menü erkannt."
-    );
-
-    readBDTMenu(window);
-  } else {
-    console.log(
-      "[WINDOW] Kein BDT Menü."
-    );
-  }
-});
-
-bot.on("windowClose", (window) => {
-  console.log(
-    "[WINDOW] Fenster geschlossen: " +
-      cleanText(window.title)
+    "[DISCORD] Schreibe !afk um das Panel zu öffnen."
   );
 });
 
-bot.on("kicked", (reason) => {
-  console.log("");
-  console.log("========================================");
-  console.log("        BOT GEKICKT");
-  console.log("========================================");
-  console.log(reason);
-});
-
-bot.on("error", (error) => {
-  console.log("");
-  console.log("========================================");
-  console.log("        BOT FEHLER");
-  console.log("========================================");
-  console.log(error);
-});
-
-function initializeDatabase() {
-  if (!fs.existsSync(DATABASE_FILE)) {
-    const initialDatabase = {
-      eintraege: []
-    };
-
-    fs.writeFileSync(
-      DATABASE_FILE,
-      JSON.stringify(
-        initialDatabase,
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    console.log(
-      "[DATENBANK] bdt.json erstellt."
-    );
-
-    return;
-  }
-
-  console.log(
-    "[DATENBANK] bdt.json geladen."
-  );
-}
-
-function loadDatabase() {
-  try {
-    const content =
-      fs.readFileSync(
-        DATABASE_FILE,
-        "utf8"
-      );
-
-    const database =
-      JSON.parse(content);
+client.on(
+  "messageCreate",
+  async (message) => {
+    if (message.author.bot) {
+      return;
+    }
 
     if (
-      !database ||
-      !Array.isArray(
-        database.eintraege
-      )
+      message.content
+        .trim()
+        .toLowerCase() === "!afk"
     ) {
-      return {
-        eintraege: []
-      };
-    }
-
-    return database;
-  } catch (error) {
-    console.log(
-      "[DATENBANK] Fehler beim Lesen:"
-    );
-
-    console.log(error);
-
-    return {
-      eintraege: []
-    };
-  }
-}
-
-function saveDatabase(database) {
-  fs.writeFileSync(
-    DATABASE_FILE,
-    JSON.stringify(
-      database,
-      null,
-      2
-    ),
-    "utf8"
-  );
-}
-
-function saveBDTData(
-  block,
-  belohnung
-) {
-  const database =
-    loadDatabase();
-
-  const heute =
-    getCurrentDate();
-
-  const existingEntry =
-    database.eintraege.find(
-      entry =>
-        entry.datum === heute
-    );
-
-  if (existingEntry) {
-    existingEntry.block = block;
-    existingEntry.belohnung =
-      belohnung;
-
-    existingEntry.aktualisiert =
-      new Date().toISOString();
-  } else {
-    database.eintraege.push({
-      datum: heute,
-      block: block,
-      belohnung: belohnung,
-      erstellt:
-        new Date().toISOString()
-    });
-  }
-
-  saveDatabase(database);
-
-  console.log("");
-  console.log("========================================");
-  console.log("        BDT GESPEICHERT");
-  console.log("========================================");
-  console.log("");
-
-  console.log(
-    "Datum: " +
-      heute
-  );
-
-  console.log(
-    "Block: " +
-      block
-  );
-
-  console.log(
-    "Belohnung: " +
-      belohnung
-  );
-
-  console.log("");
-  console.log(
-    "[DATENBANK] Gespeichert in bdt.json."
-  );
-  console.log("");
-}
-
-function getCurrentDate() {
-  const now =
-    new Date();
-
-  const year =
-    now.getFullYear();
-
-  const month =
-    String(
-      now.getMonth() + 1
-    ).padStart(2, "0");
-
-  const day =
-    String(
-      now.getDate()
-    ).padStart(2, "0");
-
-  return (
-    year +
-    "-" +
-    month +
-    "-" +
-    day
-  );
-}
-
-function readBDTMenu(window) {
-  if (bdtMenuRead) {
-    return;
-  }
-
-  bdtMenuRead = true;
-
-  console.log("");
-  console.log("========================================");
-  console.log("        BDT MENÜ ANALYSIEREN");
-  console.log("========================================");
-  console.log("");
-
-  let heutigerBlock = null;
-
-  const sinnvolleItems = [];
-
-  for (
-    let i = 0;
-    i < window.slots.length;
-    i++
-  ) {
-    const item =
-      window.slots[i];
-
-    if (!item) {
-      continue;
-    }
-
-    const name =
-      cleanText(
-        item.name || ""
-      );
-
-    const displayName =
-      cleanText(
-        item.displayName || ""
-      );
-
-    /*
-     * Gray Stained Glass Pane
-     * ist reine Dekoration.
-     */
-
-    if (
-      name ===
-        "stained_glass_pane" ||
-      displayName
-        .toLowerCase()
-        .includes(
-          "gray stained glass pane"
-        )
-    ) {
-      continue;
-    }
-
-    /*
-     * Persönliche Inventaritems
-     * werden nicht als BDT Belohnung
-     * interpretiert.
-     */
-
-    if (
-      displayName
-        .toLowerCase()
-        .includes("yeezys")
-    ) {
-      continue;
-    }
-
-    sinnvolleItems.push({
-      slot: i,
-      name: name,
-      displayName:
-        displayName,
-      item: item
-    });
-
-    console.log(
-      "[BDT ITEM] Slot " +
-        i +
-        " | " +
-        name +
-        " | " +
-        displayName
-    );
-
-    /*
-     * Der heutige Block wird anhand
-     * des BDT Items erkannt.
-     */
-
-    if (
-      name === "dirt" &&
-      displayName
-        .toLowerCase()
-        .includes(
-          "podzol"
-        )
-    ) {
-      heutigerBlock =
-        displayName;
-
-      console.log(
-        "[BDT] Heutiger Block erkannt: " +
-          heutigerBlock
-      );
-    }
-  }
-
-  if (
-    !heutigerBlock
-  ) {
-    console.log(
-      "[BDT] Heutiger Block wurde nicht erkannt."
-    );
-
-    return;
-  }
-
-  /*
-   * Die Belohnung wird aktuell
-   * bewusst nicht aus irgendeinem
-   * beliebigen Item abgeleitet.
-   *
-   * Für heute kennen wir die
-   * bestätigte BDT Belohnung:
-   *
-   * 2x verzauberter Block (Podsol)
-   */
-
-  const belohnung =
-    "2x verzauberter Block (" +
-    heutigerBlock +
-    ")";
-
-  console.log("");
-  console.log("========================================");
-  console.log("        BDT ERKANNT");
-  console.log("========================================");
-  console.log("");
-
-  console.log(
-    "Block: " +
-      heutigerBlock
-  );
-
-  console.log(
-    "Belohnung: " +
-      belohnung
-  );
-
-  saveBDTData(
-    heutigerBlock,
-    belohnung
-  );
-}
-
-function printPosition(name) {
-  if (!bot.entity) {
-    return;
-  }
-
-  console.log(
-    "[" +
-      name +
-      "] X " +
-      bot.entity.position.x.toFixed(3) +
-      " Y " +
-      bot.entity.position.y.toFixed(3) +
-      " Z " +
-      bot.entity.position.z.toFixed(3)
-  );
-}
-
-function startPortalRouteCheck() {
-  if (!bot.entity) {
-    setTimeout(
-      startPortalRouteCheck,
-      1000
-    );
-
-    return;
-  }
-
-  const x =
-    bot.entity.position.x;
-
-  const y =
-    bot.entity.position.y;
-
-  const z =
-    bot.entity.position.z;
-
-  console.log("");
-  console.log("========================================");
-  console.log("        PORTALRAUM");
-  console.log("========================================");
-
-  printPosition(
-    "PORTALRAUM"
-  );
-
-  const distanceFromStart =
-    Math.sqrt(
-      Math.pow(x - 325, 2) +
-      Math.pow(y - 67, 2) +
-      Math.pow(z - 280, 2)
-    );
-
-  if (
-    distanceFromStart > 5
-  ) {
-    console.log(
-      "[PORTAL] Noch nicht an der Startposition."
-    );
-
-    setTimeout(
-      startPortalRouteCheck,
-      1000
-    );
-
-    return;
-  }
-
-  console.log(
-    "[PORTAL] Startposition erkannt."
-  );
-
-  geheZu(
-    309.348,
-    67.000,
-    276.376,
-    () => {
-
-      console.log("");
-      console.log(
-        "[PORTAL] Portalpunkt erreicht."
-      );
-
-      printPosition(
-        "PORTALPUNKT"
-      );
-
-      console.log("");
-      console.log(
-        "[PORTAL] Warte 13 Sekunden..."
-      );
-
-      countdownBeforePortal();
-    }
-  );
-}
-
-function countdownBeforePortal() {
-  let remaining = 13;
-
-  console.log(
-    "[PORTAL] Noch " +
-      remaining +
-      " Sekunden."
-  );
-
-  const interval =
-    setInterval(() => {
-
-      remaining--;
-
       if (
-        remaining > 0
+        message.author.id !== OWNER_ID
       ) {
-
-        console.log(
-          "[PORTAL] Noch " +
-            remaining +
-            " Sekunden."
+        await message.reply(
+          "❌ Du hast dafür keine Berechtigung."
         );
 
         return;
       }
 
-      clearInterval(
-        interval
+      await sendPanel(
+        message.channel
+      );
+    }
+  }
+);
+
+client.on(
+  "interactionCreate",
+  async (interaction) => {
+    if (!interaction.isButton()) {
+      return;
+    }
+
+    if (
+      interaction.user.id !== OWNER_ID
+    ) {
+      await interaction.reply({
+        content:
+          "❌ Du hast dafür keine Berechtigung.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_start"
+    ) {
+      await startAFK(
+        interaction
       );
 
-      console.log("");
-      console.log(
-        "[PORTAL] Cooldown vorbei."
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_stop"
+    ) {
+      await stopAFK(
+        interaction
       );
 
-      console.log(
-        "[PORTAL] Laufe ins CB6 Portal."
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_reconnect"
+    ) {
+      await reconnectMinecraft(
+        interaction
       );
 
-      walkIntoPortal();
+      return;
+    }
 
-    }, 1000);
-}
+    if (
+      interaction.customId ===
+      "afk_position"
+    ) {
+      await interaction.reply({
+        content:
+          "📍 Position: " +
+          currentPosition,
+        ephemeral: true
+      });
 
-function walkIntoPortal() {
-  if (!bot.entity) {
+      return;
+    }
+
+    if (
+      interaction.customId ===
+      "afk_refresh"
+    ) {
+      await interaction.deferUpdate();
+
+      await updatePanel();
+
+      return;
+    }
+  }
+);
+
+async function startAFK(
+  interaction
+) {
+  if (afkActive) {
+    await interaction.reply({
+      content:
+        "⚠️ Der AFK Bot läuft bereits.",
+      ephemeral: true
+    });
+
     return;
   }
 
-  const targetX =
-    307.000;
+  resetStatistics();
 
-  const targetZ =
-    276.535;
+  afkActive = true;
+  mcOnline = false;
+  mcConnecting = true;
+  reconnecting = false;
 
-  const dx =
-    targetX -
-    bot.entity.position.x;
+  sessionStarted =
+    Date.now();
 
-  const dz =
-    targetZ -
-    bot.entity.position.z;
+  lastActivity =
+    Date.now();
 
-  const yaw =
-    Math.atan2(dz, dx) -
-    Math.PI / 2;
+  lastAction =
+    "Minecraft wird gestartet";
 
-  bot.pathfinder.stop();
+  await interaction.reply({
+    content:
+      "🟢 AFK Bot wird gestartet.",
+    ephemeral: true
+  });
 
-  bot.look(
-    yaw,
-    0,
-    true
-  );
+  console.log("");
+  console.log("========================================");
+  console.log("        AFK SESSION START");
+  console.log("========================================");
+  console.log("");
 
-  bot.setControlState(
-    "forward",
-    true
-  );
+  createMinecraftBot();
 
-  bot.setControlState(
-    "sprint",
-    false
-  );
-
-  bot.setControlState(
-    "jump",
-    false
-  );
-
-  setTimeout(() => {
-
-    if (
-      !citybuildReached
-    ) {
-
-      bot.clearControlStates();
-
-      console.log(
-        "[PORTAL] Sicherheitsstopp."
-      );
-
-      printPosition(
-        "POSITION"
-      );
-    }
-
-  }, 15000);
+  await updatePanel();
 }
 
-function sendHomeCommand() {
+async function stopAFK(
+  interaction
+) {
+  if (!afkActive) {
+    await interaction.reply({
+      content:
+        "ℹ️ Der AFK Bot läuft momentan nicht.",
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  afkActive = false;
+  mcOnline = false;
+  mcConnecting = false;
+  reconnecting = false;
+
+  stopAFKMovement();
+
+  if (reconnectTimer) {
+    clearTimeout(
+      reconnectTimer
+    );
+
+    reconnectTimer = null;
+  }
+
+  lastAction =
+    "Bot gestoppt";
+
+  if (mcBot) {
+    try {
+      mcBot.quit(
+        "AFK Bot gestoppt"
+      );
+    } catch (error) {
+      console.log(
+        "[MC] Fehler beim Beenden:"
+      );
+
+      console.log(
+        error
+      );
+    }
+  }
+
+  mcBot = null;
+
+  await interaction.reply({
+    content:
+      "🔴 AFK Bot wurde gestoppt.",
+    ephemeral: true
+  });
+
+  await updatePanel();
+}
+
+async function reconnectMinecraft(
+  interaction
+) {
+  if (!afkActive) {
+    await interaction.reply({
+      content:
+        "⚠️ Der AFK Bot ist nicht aktiv.",
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  statistics.reconnects++;
+
+  lastAction =
+    "Manueller Reconnect";
+
+  mcOnline = false;
+  mcConnecting = true;
+
+  stopAFKMovement();
+
+  if (mcBot) {
+    try {
+      mcBot.quit(
+        "Reconnect"
+      );
+    } catch (error) {
+    }
+  }
+
+  mcBot = null;
+
+  await interaction.reply({
+    content:
+      "🔄 Reconnect wird gestartet.",
+    ephemeral: true
+  });
+
+  setTimeout(() => {
+    if (afkActive) {
+      createMinecraftBot();
+    }
+  }, 3000);
+
+  await updatePanel();
+}
+
+function createMinecraftBot() {
+  if (!afkActive) {
+    return;
+  }
+
+  if (mcBot) {
+    return;
+  }
+
+  console.log(
+    "[MC] Erstelle Minecraft Bot..."
+  );
+
+  mcConnecting = true;
+  mcOnline = false;
+
+  lastAction =
+    "Verbinde mit GrieferGames";
+
+  mcBot = mineflayer.createBot({
+    host: "griefergames.net",
+    port: 25565,
+    username: "r.guse858@gmail.com",
+    auth: "microsoft",
+    version: "1.8.9",
+    profilesFolder: "./minecraft-auth"
+  });
+
+  mcBot.once(
+    "login",
+    () => {
+      console.log(
+        "[MC] Minecraft Login erfolgreich."
+      );
+
+      lastAction =
+        "Minecraft Login erfolgreich";
+
+      updatePanel();
+    }
+  );
+
+  mcBot.once(
+    "spawn",
+    () => {
+      console.log(
+        "[MC] Minecraft Welt geladen."
+      );
+
+      mcOnline = true;
+      mcConnecting = false;
+
+      lastActivity =
+        Date.now();
+
+      lastAction =
+        "Minecraft online";
+
+      updatePosition();
+
+      updatePanel();
+
+      setTimeout(() => {
+        if (
+          afkActive &&
+          mcBot
+        ) {
+          enterCB6();
+        }
+      }, 3000);
+    }
+  );
+
+  mcBot.on(
+    "respawn",
+    () => {
+      console.log(
+        "[MC] Respawn erkannt."
+      );
+
+      updatePosition();
+
+      setTimeout(() => {
+        if (
+          afkActive &&
+          mcBot
+        ) {
+          startAFKMovement();
+        }
+      }, 5000);
+    }
+  );
+
+  mcBot.on(
+    "messagestr",
+    (message) => {
+      console.log(
+        "[CHAT] " +
+        message
+      );
+
+      handleMinecraftChat(
+        message
+      );
+    }
+  );
+
+  mcBot.on(
+    "kicked",
+    (reason) => {
+      console.log(
+        "[MC] KICK:"
+      );
+
+      console.log(
+        reason
+      );
+
+      mcOnline = false;
+      mcConnecting = false;
+
+      stopAFKMovement();
+
+      if (afkActive) {
+        statistics.disconnects++;
+
+        lastAction =
+          "Vom Server getrennt";
+
+        updatePanel();
+
+        scheduleReconnect();
+      }
+    }
+  );
+
+  mcBot.on(
+    "end",
+    () => {
+      console.log(
+        "[MC] Verbindung beendet."
+      );
+
+      mcOnline = false;
+      mcConnecting = false;
+
+      stopAFKMovement();
+
+      mcBot = null;
+
+      if (afkActive) {
+        statistics.disconnects++;
+
+        lastAction =
+          "Verbindung verloren";
+
+        updatePanel();
+
+        scheduleReconnect();
+
+        return;
+      }
+
+      lastAction =
+        "Minecraft getrennt";
+
+      updatePanel();
+    }
+  );
+
+  mcBot.on(
+    "error",
+    (error) => {
+      console.log(
+        "[MC] Fehler:"
+      );
+
+      console.log(
+        error
+      );
+
+      lastAction =
+        "Minecraft Fehler";
+
+      updatePanel();
+    }
+  );
+}
+
+function enterCB6() {
   if (
-    homeCommandSent
+    !afkActive ||
+    !mcBot
   ) {
     return;
   }
 
-  homeCommandSent =
-    true;
-
-  console.log("");
-  console.log("========================================");
-  console.log("        HOME 55");
-  console.log("========================================");
-  console.log("");
-
   console.log(
-    "[HOME] Sende /home 55..."
+    "[CB6] Sende /portal..."
   );
 
-  bot.chat(
-    "/home 55"
-  );
+  lastAction =
+    "Öffne Citybuild Auswahl";
 
-  console.log(
-    "[HOME] Befehl gesendet."
+  updatePanel();
+
+  mcBot.chat(
+    "/portal"
   );
 
   setTimeout(() => {
-
     if (
-      !npcSearchStarted
+      !afkActive ||
+      !mcBot
     ) {
-
-      npcSearchStarted =
-        true;
-
-      console.log(
-        "[HOME] Warte auf Teleport..."
-      );
-
-      setTimeout(() => {
-        searchForBDTNpc();
-      }, 5000);
+      return;
     }
+
+    console.log(
+      "[CB6] Sende /home 55..."
+    );
+
+    lastAction =
+      "Sende /home 55";
+
+    mcBot.chat(
+      "/home 55"
+    );
+
+    setTimeout(() => {
+      if (
+        !afkActive ||
+        !mcBot
+      ) {
+        return;
+      }
+
+      updatePosition();
+
+      lastAction =
+        "CB6 erreicht";
+
+      startAFKMovement();
+
+      updatePanel();
+
+    }, 7000);
 
   }, 5000);
 }
 
-function searchForBDTNpc() {
-  console.log("");
-  console.log("========================================");
-  console.log("        BDT NPC SUCHEN");
-  console.log("========================================");
-  console.log("");
-
-  printPosition(
-    "HOME POSITION"
-  );
-
-  const entities =
-    Object.values(
-      bot.entities
-    );
-
-  let closestEntity =
-    null;
-
-  let closestDistance =
-    Infinity;
-
-  for (
-    const entity of entities
-  ) {
-
-    if (!entity) {
-      continue;
-    }
-
-    if (
-      entity ===
-      bot.entity
-    ) {
-      continue;
-    }
-
-    const distance =
-      bot.entity.position.distanceTo(
-        entity.position
-      );
-
-    if (
-      distance <= 10
-    ) {
-
-      console.log(
-        "[ENTITY] " +
-          entity.type +
-          " | " +
-          entity.username +
-          " | Entfernung: " +
-          distance.toFixed(3)
-      );
-
-      if (
-        distance <
-        closestDistance
-      ) {
-
-        closestDistance =
-          distance;
-
-        closestEntity =
-          entity;
-      }
-    }
-  }
-
+function startAFKMovement() {
   if (
-    !closestEntity
+    !afkActive ||
+    !mcBot
   ) {
-
-    console.log(
-      "[NPC] Keine Entity gefunden."
-    );
-
     return;
   }
 
-  console.log("");
-  console.log(
-    "[NPC] Naheste Entity gefunden."
-  );
+  stopAFKMovement();
 
   console.log(
-    "[NPC] Typ: " +
-      closestEntity.type
+    "[AFK] Bewegungssystem gestartet."
   );
 
-  console.log(
-    "[NPC] Name: " +
-      closestEntity.username
-  );
+  movementTimer =
+    setInterval(() => {
+      performMovement();
+    }, randomBetween(
+      12000,
+      22000
+    ));
 
-  console.log(
-    "[NPC] Entfernung: " +
-      closestDistance.toFixed(3)
-  );
+  jumpTimer =
+    setInterval(() => {
+      performJump();
+    }, randomBetween(
+      30000,
+      60000
+    ));
 
-  clickNpc(
-    closestEntity
-  );
+  positionTimer =
+    setInterval(() => {
+      updatePosition();
+    }, 10000);
+
+  performMovement();
 }
 
-function clickNpc(
-  entity
-) {
+function stopAFKMovement() {
+  if (
+    movementTimer
+  ) {
+    clearInterval(
+      movementTimer
+    );
+
+    movementTimer = null;
+  }
 
   if (
-    npcClicked
+    jumpTimer
+  ) {
+    clearInterval(
+      jumpTimer
+    );
+
+    jumpTimer = null;
+  }
+
+  if (
+    positionTimer
+  ) {
+    clearInterval(
+      positionTimer
+    );
+
+    positionTimer = null;
+  }
+
+  if (mcBot) {
+    try {
+      mcBot.clearControlStates();
+    } catch (error) {
+    }
+  }
+}
+
+function performMovement() {
+  if (
+    !afkActive ||
+    !mcBot ||
+    !mcOnline
   ) {
     return;
   }
 
-  npcClicked =
-    true;
+  const direction =
+    Math.random() > 0.5
+      ? "left"
+      : "right";
 
-  console.log("");
-  console.log("========================================");
-  console.log("        NPC KLICKEN");
-  console.log("========================================");
-  console.log("");
+  const duration =
+    randomBetween(
+      600,
+      1400
+    );
+
+  console.log(
+    "[AFK] Bewegung: " +
+    direction
+  );
+
+  lastActivity =
+    Date.now();
+
+  lastAction =
+    "Bewegung";
+
+  statistics.movements++;
 
   try {
-
-    bot.lookAt(
-      entity.position.offset(
-        0,
-        1,
-        0
-      ),
+    mcBot.setControlState(
+      direction,
       true
     );
 
     setTimeout(() => {
+      if (!mcBot) {
+        return;
+      }
 
-      console.log(
-        "[NPC] Aktiviere Entity..."
-      );
+      try {
+        mcBot.setControlState(
+          direction,
+          false
+        );
+      } catch (error) {
+      }
+    }, duration);
 
-      bot.activateEntity(
-        entity
-      );
-
-      console.log(
-        "[NPC] Entity aktiviert."
-      );
-
-    }, 500);
-
-  } catch (
-    error
-  ) {
-
+  } catch (error) {
     console.log(
-      "[NPC] Fehler beim Klicken:"
+      "[AFK] Bewegungsfehler:"
     );
 
     console.log(
       error
     );
   }
+
+  updatePanel();
 }
 
-function geheZu(
-  x,
-  y,
-  z,
-  callback
-) {
-
-  const ziel =
-    new goals.GoalNear(
-      x,
-      y,
-      z,
-      0.5
-    );
-
-  let finished =
-    false;
+function performJump() {
+  if (
+    !afkActive ||
+    !mcBot ||
+    !mcOnline
+  ) {
+    return;
+  }
 
   console.log(
-    "[WEG] Laufe zu " +
-      x.toFixed(3) +
-      " / " +
-      y.toFixed(3) +
-      " / " +
-      z.toFixed(3)
+    "[AFK] Sprung"
   );
 
-  bot.pathfinder.setGoal(
-    ziel
-  );
+  lastActivity =
+    Date.now();
 
-  const interval =
-    setInterval(() => {
+  lastAction =
+    "Sprung";
+
+  statistics.jumps++;
+
+  try {
+    mcBot.setControlState(
+      "jump",
+      true
+    );
+
+    setTimeout(() => {
+      if (!mcBot) {
+        return;
+      }
+
+      try {
+        mcBot.setControlState(
+          "jump",
+          false
+        );
+      } catch (error) {
+      }
+    }, 500);
+
+  } catch (error) {
+  }
+
+  updatePanel();
+}
+
+function updatePosition() {
+  if (
+    !mcBot ||
+    !mcBot.entity
+  ) {
+    return;
+  }
+
+  const x =
+    mcBot.entity.position.x.toFixed(3);
+
+  const y =
+    mcBot.entity.position.y.toFixed(3);
+
+  const z =
+    mcBot.entity.position.z.toFixed(3);
+
+  currentPosition =
+    x +
+    " / " +
+    y +
+    " / " +
+    z;
+
+  console.log(
+    "[AFK] Position: " +
+    currentPosition
+  );
+}
+
+function handleMinecraftChat(
+  message
+) {
+  const text =
+    String(message)
+      .replace(
+        /§[0-9a-fk-or]/gi,
+        ""
+      )
+      .toLowerCase();
+
+  if (
+    text.includes(
+      "du wurdest wegen inaktivität"
+    )
+  ) {
+    console.log(
+      "[AFK] AFK Hinweis erkannt."
+    );
+
+    lastAction =
+      "AFK Hinweis erkannt";
+
+    updatePanel();
+
+    return;
+  }
+
+  if (
+    text.includes(
+      "du wurdest gekickt"
+    )
+  ) {
+    console.log(
+      "[AFK] Kick Nachricht erkannt."
+    );
+
+    lastAction =
+      "Kick erkannt";
+
+    updatePanel();
+
+    return;
+  }
+}
+
+function scheduleReconnect() {
+  if (
+    !afkActive
+  ) {
+    return;
+  }
+
+  if (
+    reconnectTimer
+  ) {
+    return;
+  }
+
+  reconnecting = true;
+
+  lastAction =
+    "Reconnect in 10 Sekunden";
+
+  updatePanel();
+
+  reconnectTimer =
+    setTimeout(() => {
+      reconnectTimer =
+        null;
+
+      reconnecting =
+        false;
 
       if (
-        finished ||
-        !bot.entity
+        !afkActive
       ) {
         return;
       }
 
-      const dx =
-        x -
-        bot.entity.position.x;
+      statistics.reconnects++;
 
-      const dy =
-        y -
-        bot.entity.position.y;
+      lastAction =
+        "Automatischer Reconnect";
 
-      const dz =
-        z -
-        bot.entity.position.z;
+      createMinecraftBot();
 
-      const distance =
-        Math.sqrt(
-          dx * dx +
-          dy * dy +
-          dz * dz
-        );
+      updatePanel();
 
-      if (
-        distance <= 0.6
-      ) {
-
-        finished =
-          true;
-
-        clearInterval(
-          interval
-        );
-
-        bot.pathfinder.stop();
-
-        console.log(
-          "[WEG] Ziel erreicht. Entfernung: " +
-            distance.toFixed(3)
-        );
-
-        printPosition(
-          "POSITION"
-        );
-
-        callback();
-      }
-
-    }, 250);
-
-  setTimeout(() => {
-
-    if (
-      finished
-    ) {
-      return;
-    }
-
-    finished =
-      true;
-
-    clearInterval(
-      interval
-    );
-
-    bot.pathfinder.stop();
-
-    console.log("");
-    console.log(
-      "[WEG] Sicherheitsstopp nach 60 Sekunden."
-    );
-
-    printPosition(
-      "POSITION"
-    );
-
-  }, 60000);
+    }, 10000);
 }
 
-function cleanText(value) {
-  if (
-    value === null ||
-    value === undefined
-  ) {
-    return "";
+function resetStatistics() {
+  statistics = {
+    movements: 0,
+    jumps: 0,
+    reconnects: 0,
+    disconnects: 0
+  };
+
+  sessionStarted =
+    Date.now();
+
+  lastActivity =
+    Date.now();
+
+  currentPosition =
+    "Unbekannt";
+
+  lastAction =
+    "Neue Session";
+}
+
+async function sendPanel(
+  channel
+) {
+  const embed =
+    createEmbed();
+
+  const buttons =
+    createButtons();
+
+  const message =
+    await channel.send({
+      embeds: [
+        embed
+      ],
+      components: [
+        buttons
+      ]
+    });
+
+  panelMessage =
+    message;
+
+  console.log(
+    "[DISCORD] AFK Panel erstellt."
+  );
+}
+
+async function updatePanel() {
+  if (!panelMessage) {
+    return;
   }
 
-  return String(value)
-    .replace(
-      /§[0-9a-fk-or]/gi,
-      ""
-    )
-    .trim();
+  try {
+    await panelMessage.edit({
+      embeds: [
+        createEmbed()
+      ],
+      components: [
+        createButtons()
+      ]
+    });
+  } catch (error) {
+    console.log(
+      "[DISCORD] Panel konnte nicht aktualisiert werden."
+    );
+  }
 }
+
+function createEmbed() {
+  return new EmbedBuilder()
+    .setTitle(
+      "🤖 GrieferGames AFK Bot"
+    )
+    .setDescription(
+      "Dein persönliches AFK Kontrollzentrum"
+    )
+    .addFields(
+      {
+        name:
+          "📡 Status",
+        value:
+          getStatus(),
+        inline:
+          true
+      },
+      {
+        name:
+          "🌐 Citybuild",
+        value:
+          "CB6",
+        inline:
+          true
+      },
+      {
+        name:
+          "🔌 Verbindung",
+        value:
+          getConnection(),
+        inline:
+          true
+      },
+      {
+        name:
+          "📍 Position",
+        value:
+          currentPosition,
+        inline:
+          false
+      },
+      {
+        name:
+          "⏱️ Laufzeit",
+        value:
+          getUptime(),
+        inline:
+          true
+      },
+      {
+        name:
+          "⚡ Letzte Aktion",
+        value:
+          lastAction,
+        inline:
+          true
+      },
+      {
+        name:
+          "🕐 Aktivität",
+        value:
+          getLastActivity(),
+        inline:
+          true
+      },
+      {
+        name:
+          "📊 AFK Statistik",
+        value:
+          [
+            "Bewegungen: **" +
+              statistics.movements +
+              "**",
+            "Sprünge: **" +
+              statistics.jumps +
+              "**",
+            "Reconnects: **" +
+              statistics.reconnects +
+              "**",
+            "Disconnects: **" +
+              statistics.disconnects +
+              "**"
+          ].join("\n"),
+        inline:
+          false
+      }
+    )
+    .setFooter({
+      text:
+        "BlitzControl • AFK System"
+    })
+    .setTimestamp();
+}
+
+function createButtons() {
+  return new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_start"
+        )
+        .setLabel(
+          "AFK Start"
+        )
+        .setEmoji(
+          "🟢"
+        )
+        .setStyle(
+          ButtonStyle.Success
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_stop"
+        )
+        .setLabel(
+          "AFK Stopp"
+        )
+        .setEmoji(
+          "🔴"
+        )
+        .setStyle(
+          ButtonStyle.Danger
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_reconnect"
+        )
+        .setLabel(
+          "Reconnect"
+        )
+        .setEmoji(
+          "🔄"
+        )
+        .setStyle(
+          ButtonStyle.Primary
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_position"
+        )
+        .setLabel(
+          "Position"
+        )
+        .setEmoji(
+          "📍"
+        )
+        .setStyle(
+          ButtonStyle.Secondary
+        ),
+
+      new ButtonBuilder()
+        .setCustomId(
+          "afk_refresh"
+        )
+        .setLabel(
+          "Aktualisieren"
+        )
+        .setEmoji(
+          "📊"
+        )
+        .setStyle(
+          ButtonStyle.Secondary
+        )
+    );
+}
+
+function getStatus() {
+  if (
+    afkActive &&
+    mcOnline
+  ) {
+    return "🟢 **AFK AKTIV**";
+  }
+
+  if (
+    afkActive &&
+    mcConnecting
+  ) {
+    return "🟡 **VERBINDET**";
+  }
+
+  return "🔴 **OFFLINE**";
+}
+
+function getConnection() {
+  if (mcOnline) {
+    return "🟢 Stabil";
+  }
+
+  if (mcConnecting) {
+    return "🟡 Verbindung...";
+  }
+
+  if (reconnecting) {
+    return "🟠 Reconnect...";
+  }
+
+  return "🔴 Getrennt";
+}
+
+function getUptime() {
+  if (!sessionStarted) {
+    return "00:00:00";
+  }
+
+  return formatDuration(
+    Date.now() -
+    sessionStarted
+  );
+}
+
+function getLastActivity() {
+  if (!lastActivity) {
+    return "Noch keine";
+  }
+
+  return (
+    formatDuration(
+      Date.now() -
+      lastActivity
+    ) +
+    " her"
+  );
+}
+
+function formatDuration(
+  milliseconds
+) {
+  let seconds =
+    Math.floor(
+      milliseconds / 1000
+    );
+
+  const hours =
+    Math.floor(
+      seconds / 3600
+    );
+
+  seconds =
+    seconds % 3600;
+
+  const minutes =
+    Math.floor(
+      seconds / 60
+    );
+
+  seconds =
+    seconds % 60;
+
+  return (
+    String(hours).padStart(2, "0") +
+    ":" +
+    String(minutes).padStart(2, "0") +
+    ":" +
+    String(seconds).padStart(2, "0")
+  );
+}
+
+function randomBetween(
+  minimum,
+  maximum
+) {
+  return Math.floor(
+    Math.random() *
+      (
+        maximum -
+        minimum +
+        1
+      )
+  ) + minimum;
+}
+
+if (!TOKEN) {
+  console.error(
+    "DISCORD_TOKEN fehlt."
+  );
+
+  process.exit(1);
+}
+
+if (!OWNER_ID) {
+  console.error(
+    "DISCORD_OWNER_ID fehlt."
+  );
+
+  process.exit(1);
+}
+
+client.login(
+  TOKEN
+);
