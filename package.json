@@ -1,15 +1,15 @@
 {
-  "name": "bdtbotextern",
+  "name": "griefergames-afk-bot",
   "version": "1.0.0",
-  "description": "Externer BDT Bot für GrieferGames",
-  "main": "index.js",
+  "description": "Discord gesteuerter GrieferGames AFK Bot",
+  "main": "discord.js",
   "scripts": {
     "start": "node discord.js"
   },
   "dependencies": {
-    "discord.js": "^14.27.0",
-    "dotenv": "^17.4.2",
-    "mineflayer": "^4.37.1",
-    "mineflayer-pathfinder": "^2.4.5"
+    "discord.js": "14.25.1",
+    "@discordjs/util": "1.2.0",
+    "dotenv": "17.2.2",
+    "mineflayer": "4.33.0"
   }
 }
