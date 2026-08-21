@@ -235,7 +235,7 @@ async function lookNorth() {
 }
 
 async function moveForward(ms) {
-    if (!mcBot) {
+    if (!mcBot || !portalRouteRunning) {
         return;
     }
 
@@ -250,7 +250,6 @@ async function moveForward(ms) {
         Date.now() - start < ms
     ) {
         statistics.movements++;
-
         await sleep(50);
     }
 
@@ -258,7 +257,7 @@ async function moveForward(ms) {
 }
 
 async function jump() {
-    if (!mcBot) {
+    if (!mcBot || !portalRouteRunning) {
         return;
     }
 
@@ -294,50 +293,62 @@ async function runCB6Route() {
 
     console.log("[ROUTE] Aktuelle Position:", getPosition());
 
+    /*
+     * 1. Portalraum öffnen
+     */
+
     console.log("[ROUTE] Sende /portal...");
 
     mcBot.chat("/portal");
 
-    await sleep(4000);
+    /*
+     * Auf den Portalraum warten
+     */
+
+    console.log("[ROUTE] Warte auf Portalraum...");
+
+    await sleep(5000);
 
     if (!mcBot || !portalRouteRunning) {
         return;
     }
 
-    console.log("[ROUTE] Portalraum sollte jetzt geladen sein.");
+    console.log("[ROUTE] Portalraum geladen.");
     console.log("[ROUTE] Position:", getPosition());
+
+    /*
+     * 2. Blickrichtung nach Norden
+     */
 
     await lookNorth();
 
-    console.log("[ROUTE] Starte festen Weg über die Kante.");
-
     /*
-        Alter fester Weg:
+     * 3. Zum CB6 Portal laufen
+     *
+     * Der bekannte Weg:
+     *
+     * Start ungefähr:
+     * X 309.50
+     * Y 66
+     * Z 280.00
+     *
+     * Kante:
+     * X 309.50
+     * Y 68.17
+     * Z 278.03
+     *
+     * Danach:
+     * X 309.50
+     * Y 68.18
+     * Z 277.55
+     *
+     * Ziel:
+     * X 309.30
+     * Y 67
+     * Z 276.60
+     */
 
-        Start:
-        X 309.50
-        Y 66
-        Z 280.00
-
-        Kante:
-        X 309.50
-        Y 68.17
-        Z 278.03
-
-        Danach:
-        X 309.50
-        Y 68.18
-        Z 277.55
-
-        Ziel:
-        X 309.30
-        Y 67
-        Z 276.60
-    */
-
-    console.log("[ROUTE] Ziel X: 309.30");
-    console.log("[ROUTE] Ziel Y: 67.00");
-    console.log("[ROUTE] Ziel Z: 276.60");
+    console.log("[ROUTE] Starte Weg zum CB6 Portal.");
 
     await moveForward(900);
 
@@ -364,7 +375,7 @@ async function runCB6Route() {
 
     await sleep(300);
 
-    console.log("[ROUTE] Endlauf zum CB6 Portal.");
+    console.log("[ROUTE] Letztes Stück zum CB6 Portal.");
 
     await moveForward(900);
 
@@ -377,6 +388,10 @@ async function runCB6Route() {
     console.log("[ROUTE] CB6 Portal erreicht.");
     console.log("[ROUTE] Position:", getPosition());
 
+    /*
+     * 4. 12 Sekunden im CB6 Portal warten
+     */
+
     console.log("[ROUTE] Warte 12 Sekunden.");
 
     await sleep(12000);
@@ -385,18 +400,29 @@ async function runCB6Route() {
         return;
     }
 
+    /*
+     * 5. Nach CB6 Home 55 laden
+     */
+
     console.log("[ROUTE] 12 Sekunden vorbei.");
     console.log("[ROUTE] Sende /home 55.");
 
     mcBot.chat("/home 55");
+
+    await sleep(4000);
 
     portalEntered = true;
     portalRouteRunning = false;
 
     console.log("[ROUTE] /home 55 gesendet.");
     console.log("[ROUTE] CB6 Ablauf abgeschlossen.");
+    console.log("[ROUTE] Aktuelle Position:", getPosition());
 
-    await sleep(3000);
+    /*
+     * 6. AFK starten
+     */
+
+    console.log("[MC] AFK Bot ist jetzt auf CB6.");
 
     updatePanel();
 }
