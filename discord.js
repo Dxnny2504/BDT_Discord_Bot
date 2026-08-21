@@ -1,54 +1,48 @@
-discordClient.on(
-    "messageCreate",
-    async message => {
+require("dotenv").config();
 
-        if (
-            message.author.bot
-        ) {
-            return;
-        }
+const fs = require("fs");
+const path = require("path");
+const mineflayer = require("mineflayer");
 
-        if (
-            message.content
-                .trim()
-                .toLowerCase() !==
-            "!afk"
-        ) {
-            return;
-        }
+const {
+    Client,
+    GatewayIntentBits,
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
+} = require("discord.js");
 
-        if (
-            DISCORD_OWNER_ID &&
-            message.author.id !==
-            DISCORD_OWNER_ID
-        ) {
-            return;
-        }
+const DISCORD_TOKEN =
+    process.env.DISCORD_TOKEN;
 
-        console.log(
-            "[DISCORD] !afk empfangen."
-        );
+const DISCORD_OWNER_ID =
+    process.env.DISCORD_OWNER_ID;
 
-        try {
+const MC_EMAIL =
+    process.env.MC_EMAIL ||
+    "r.guse858@gmail.com";
 
-            panelMessage =
-                await message.channel.send(
-                    createPanel()
-                );
+const MC_HOST =
+    process.env.MC_HOST ||
+    "play.griefergames.net";
 
-            console.log(
-                "[DISCORD] AFK Panel erstellt."
-            );
+const MC_PORT =
+    Number(
+        process.env.MC_PORT ||
+        25565
+    );
 
-        } catch (error) {
+const MC_AUTH_DIR =
+    path.join(
+        process.cwd(),
+        "minecraft-auth"
+    );
 
-            console.error(
-                "[DISCORD ERROR]"
-            );
+let bot = null;
+let starting = false;
+let afkRunning = false;
+let routeRunning = false;
+let panelMessage = null;
 
-            console.error(error);
-
-        }
-
-    }
-);
+let startedAt = null;
