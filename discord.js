@@ -12,9 +12,11 @@ const {
     MessageFlags
 } = require("discord.js");
 
+const { Vec3 } = require("vec3");
+
 
 // ============================================================
-// RAILWAY VARIABLEN
+// RAILWAY
 // ============================================================
 
 const DISCORD_TOKEN =
@@ -46,7 +48,7 @@ const MC_PORT =
 
 
 // ============================================================
-// VARIABLEN PRÜFEN
+// PRÜFEN
 // ============================================================
 
 function checkEnvironment() {
@@ -67,15 +69,10 @@ function checkEnvironment() {
 
     if (missing.length > 0) {
 
-        console.error("");
-        console.error("========================================");
-        console.error("FEHLENDE RAILWAY VARIABLEN");
-        console.error("========================================");
         console.error(
+            "[SYSTEM] Fehlende Variablen:",
             missing.join(", ")
         );
-        console.error("========================================");
-        console.error("");
 
         process.exit(1);
     }
@@ -97,15 +94,10 @@ try {
         }
     );
 
-    console.log(
-        "[AUTH] Speicher: " +
-        MC_AUTH_DIR
-    );
-
 } catch (error) {
 
     console.error(
-        "[AUTH ERROR] Auth Ordner konnte nicht erstellt werden."
+        "[AUTH] Auth Ordner konnte nicht erstellt werden."
     );
 
     console.error(error);
@@ -128,7 +120,7 @@ const discordClient =
 
 
 // ============================================================
-// STATUS
+// MINECRAFT
 // ============================================================
 
 let bot = null;
@@ -137,8 +129,6 @@ let starting = false;
 
 let routeRunning = false;
 
-let calibrationRunning = false;
-
 let panelMessage = null;
 
 let startedAt = null;
@@ -146,12 +136,11 @@ let startedAt = null;
 let lastAction =
     "Noch keine";
 
-let manualStop =
-    false;
+let manualStop = false;
 
 
 // ============================================================
-// CB6 ZIEL AUS UNSEREN VORHERIGEN TESTS
+// CB6 ZIEL
 // ============================================================
 
 const CB6_PORTAL = {
@@ -168,11 +157,10 @@ const CB6_PORTAL = {
 function sleep(ms) {
 
     return new Promise(
-        resolve =>
-            setTimeout(
-                resolve,
-                ms
-            )
+        resolve => setTimeout(
+            resolve,
+            ms
+        )
     );
 }
 
@@ -198,40 +186,38 @@ function getPosition() {
         return "Unbekannt";
     }
 
-    const position =
+    const p =
         bot.entity.position;
 
     return (
-        "X: " +
-        position.x.toFixed(3) +
-        " | Y: " +
-        position.y.toFixed(3) +
-        " | Z: " +
-        position.z.toFixed(3)
+        `X: ${p.x.toFixed(3)} | ` +
+        `Y: ${p.y.toFixed(3)} | ` +
+        `Z: ${p.z.toFixed(3)}`
     );
 }
 
 
-function getRotation() {
+function getDistanceToCB6() {
 
     if (
         !bot ||
         !bot.entity
     ) {
-        return "Unbekannt";
+        return null;
     }
 
-    const yaw =
-        bot.entity.yaw;
+    const p =
+        bot.entity.position;
 
-    const pitch =
-        bot.entity.pitch;
+    const dx =
+        CB6_PORTAL.x - p.x;
 
-    return (
-        "Yaw: " +
-        yaw.toFixed(5) +
-        " | Pitch: " +
-        pitch.toFixed(5)
+    const dz =
+        CB6_PORTAL.z - p.z;
+
+    return Math.sqrt(
+        dx * dx +
+        dz * dz
     );
 }
 
@@ -276,7 +262,7 @@ function getRuntime() {
 
 
 // ============================================================
-// PANEL
+// DISCORD PANEL
 // ============================================================
 
 function createPanel() {
@@ -287,13 +273,16 @@ function createPanel() {
             bot.entity
         );
 
+    const distance =
+        getDistanceToCB6();
+
     const embed =
         new EmbedBuilder()
             .setTitle(
                 "GRIEFERGAMES AFK BOT"
             )
             .setDescription(
-                "Kalibrierung der CB6 Route"
+                "Minecraft AFK Steuerung"
             )
             .addFields(
 
@@ -321,10 +310,21 @@ function createPanel() {
                 },
 
                 {
-                    name: "Blickrichtung",
+                    name: "Entfernung zu CB6",
                     value:
-                        getRotation(),
-                    inline: false
+                        distance === null
+                            ? "Unbekannt"
+                            : `${distance.toFixed(2)} Blöcke`,
+                    inline: true
+                },
+
+                {
+                    name: "Route",
+                    value:
+                        routeRunning
+                            ? "🟡 Zum CB6 Portal"
+                            : "⚪ Keine Route",
+                    inline: true
                 },
 
                 {
@@ -338,7 +338,7 @@ function createPanel() {
                     name: "Letzte Aktion",
                     value:
                         lastAction,
-                    inline: true
+                    inline: false
                 }
 
             )
@@ -408,7 +408,7 @@ function createPanel() {
 
 
 // ============================================================
-// PANEL AKTUALISIEREN
+// PANEL UPDATE
 // ============================================================
 
 async function updatePanel() {
@@ -435,34 +435,308 @@ async function updatePanel() {
 
 
 // ============================================================
-// KALIBRIERUNG
+// /PORTAL
 // ============================================================
 
-async function runCalibration() {
+async function enterPortalRoom() {
 
-    if (
-        !bot ||
-        calibrationRunning
-    ) {
-        return;
+    if (!bot) {
+        return false;
     }
 
-    calibrationRunning =
-        true;
+    setLastAction(
+        "/portal"
+    );
+
+    console.log(
+        "[ROUTE] Sende /portal..."
+    );
+
+    bot.chat(
+        "/portal"
+    );
+
+    await sleep(
+        5000
+    );
+
+    if (!bot) {
+        return false;
+    }
+
+    console.log(
+        "[ROUTE] Portalraum erreicht."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    return true;
+}
+
+
+// ============================================================
+// ZIELBLICKRICHTUNG
+// ============================================================
+
+async function lookAtCB6() {
+
+    if (!bot) {
+        return false;
+    }
+
+    const target =
+        new Vec3(
+            CB6_PORTAL.x,
+            CB6_PORTAL.y,
+            CB6_PORTAL.z
+        );
+
+    console.log(
+        "[ROUTE] Drehe direkt auf das CB6 Portal."
+    );
+
+    await bot.lookAt(
+        target,
+        true
+    );
+
+    await sleep(500);
+
+    console.log(
+        "[ROUTE] Blickrichtung auf Ziel gesetzt."
+    );
+
+    return true;
+}
+
+
+// ============================================================
+// ZUM ZIEL LAUFEN
+// ============================================================
+
+async function walkToCB6() {
+
+    if (!bot) {
+        return false;
+    }
 
     console.log("");
     console.log(
         "========================================"
     );
     console.log(
-        "        CB6 KALIBRIERUNG"
+        "        LAUFE ZUM CB6 PORTAL"
     );
     console.log(
         "========================================"
     );
 
+    console.log(
+        "[ROUTE] Startposition: " +
+        getPosition()
+    );
+
+    console.log(
+        "[ROUTE] Ziel:"
+    );
+
+    console.log(
+        `X: ${CB6_PORTAL.x} | ` +
+        `Y: ${CB6_PORTAL.y} | ` +
+        `Z: ${CB6_PORTAL.z}`
+    );
+
+
+    await lookAtCB6();
+
+
+    if (!bot) {
+        return false;
+    }
+
+
+    bot.setControlState(
+        "forward",
+        true
+    );
+
+    bot.setControlState(
+        "sprint",
+        true
+    );
+
+
+    const maxRunTime =
+        5000;
+
+    const start =
+        Date.now();
+
+
+    let lastLog =
+        0;
+
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() - start < maxRunTime
+    ) {
+
+        const distance =
+            getDistanceToCB6();
+
+
+        if (
+            distance !== null &&
+            distance <= 1.0
+        ) {
+
+            console.log("");
+            console.log(
+                "[ROUTE] Zielbereich erreicht."
+            );
+
+            console.log(
+                "[ROUTE] Entfernung: " +
+                distance.toFixed(3)
+            );
+
+            break;
+        }
+
+
+        if (
+            Date.now() - lastLog >= 500
+        ) {
+
+            lastLog =
+                Date.now();
+
+            console.log(
+                "[ROUTE] Position: " +
+                getPosition()
+            );
+
+            if (distance !== null) {
+
+                console.log(
+                    "[ROUTE] Entfernung: " +
+                    distance.toFixed(3)
+                );
+            }
+        }
+
+
+        await sleep(
+            50
+        );
+    }
+
+
+    bot.setControlState(
+        "forward",
+        false
+    );
+
+    bot.setControlState(
+        "sprint",
+        false
+    );
+
+
+    if (!bot) {
+        return false;
+    }
+
+
+    const finalDistance =
+        getDistanceToCB6();
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "[ROUTE] Bewegung beendet."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    console.log(
+        "[ROUTE] Entfernung zum CB6 Portal: " +
+        (
+            finalDistance === null
+                ? "Unbekannt"
+                : finalDistance.toFixed(3)
+        )
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    if (
+        finalDistance !== null &&
+        finalDistance <= 1.5
+    ) {
+
+        setLastAction(
+            "CB6 Portal erreicht"
+        );
+
+        return true;
+    }
+
+
     setLastAction(
-        "/portal wird gesendet"
+        "CB6 Ziel nicht erreicht"
+    );
+
+    return false;
+}
+
+
+// ============================================================
+// CB6 ROUTE
+// ============================================================
+
+async function startCB6Route() {
+
+    if (
+        !bot ||
+        routeRunning
+    ) {
+        return;
+    }
+
+    routeRunning =
+        true;
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+    console.log(
+        "        CB6 ROUTE"
+    );
+    console.log(
+        "========================================"
+    );
+
+
+    setLastAction(
+        "Starte CB6 Route"
     );
 
     await updatePanel();
@@ -472,95 +746,68 @@ async function runCalibration() {
     // PORTAL
     // ========================================================
 
-    console.log(
-        "[CALIBRATION] Sende /portal..."
-    );
-
-    bot.chat(
-        "/portal"
-    );
-
-
-    // ========================================================
-    // WARTEN
-    // ========================================================
-
-    console.log(
-        "[CALIBRATION] Warte 5 Sekunden..."
-    );
-
-    await sleep(
-        5000
-    );
+    const portalSuccess =
+        await enterPortalRoom();
 
 
     if (
+        !portalSuccess ||
         !bot ||
-        manualStop
+        !routeRunning
     ) {
 
-        calibrationRunning =
+        routeRunning =
             false;
 
         return;
     }
 
 
-    // ========================================================
-    // POSITION
-    // ========================================================
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "        PORTAL POSITION"
-    );
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "[CALIBRATION] Position:"
-    );
-
-    console.log(
-        getPosition()
-    );
-
-    console.log(
-        "[CALIBRATION] Blickrichtung:"
-    );
-
-    console.log(
-        getRotation()
-    );
-
-    console.log(
-        "[CALIBRATION] Erwartetes Ziel:"
-    );
-
-    console.log(
-        "X: " +
-        CB6_PORTAL.x +
-        " | Y: " +
-        CB6_PORTAL.y +
-        " | Z: " +
-        CB6_PORTAL.z
-    );
-
-    console.log(
-        "========================================"
-    );
-
-
     setLastAction(
-        "Portalraum kalibriert"
+        "Portalraum erreicht"
     );
 
-    calibrationRunning =
-        false;
+    await updatePanel();
+
+
+    // ========================================================
+    // ZUM CB6 PORTAL
+    // ========================================================
+
+    const success =
+        await walkToCB6();
+
+
+    if (
+        success &&
+        bot
+    ) {
+
+        console.log(
+            "[ROUTE] CB6 Portal erfolgreich erreicht."
+        );
+
+        routeRunning =
+            false;
+
+        setLastAction(
+            "CB6 Portal erreicht"
+        );
+
+    } else {
+
+        console.log(
+            "[ROUTE] CB6 Portal nicht erreicht."
+        );
+
+        routeRunning =
+            false;
+
+        setLastAction(
+            "CB6 Route fehlgeschlagen"
+        );
+    }
+
 
     await updatePanel();
 }
@@ -598,9 +845,6 @@ function startMinecraft() {
         false;
 
     routeRunning =
-        false;
-
-    calibrationRunning =
         false;
 
     startedAt =
@@ -712,7 +956,6 @@ function startMinecraft() {
                         console.log(
                             "========================================"
                         );
-                        console.log("");
                     }
             });
 
@@ -777,7 +1020,7 @@ function startMinecraft() {
                     !manualStop
                 ) {
 
-                    await runCalibration();
+                    await startCB6Route();
                 }
             }
         );
@@ -875,9 +1118,6 @@ function startMinecraft() {
                 routeRunning =
                     false;
 
-                calibrationRunning =
-                    false;
-
                 setLastAction(
                     "Minecraft Verbindung beendet"
                 );
@@ -906,9 +1146,6 @@ function startMinecraft() {
         routeRunning =
             false;
 
-        calibrationRunning =
-            false;
-
         setLastAction(
             "Minecraft Start fehlgeschlagen"
         );
@@ -919,7 +1156,7 @@ function startMinecraft() {
 
 
 // ============================================================
-// MINECRAFT STOPP
+// STOPP
 // ============================================================
 
 function stopMinecraft() {
@@ -928,9 +1165,6 @@ function stopMinecraft() {
         true;
 
     routeRunning =
-        false;
-
-    calibrationRunning =
         false;
 
     startedAt =
@@ -947,16 +1181,7 @@ function stopMinecraft() {
                 "AFK Bot gestoppt"
             );
 
-        } catch (error) {
-
-            console.error(
-                "[MC ERROR] Fehler beim Stoppen."
-            );
-
-            console.error(
-                error
-            );
-        }
+        } catch {}
     }
 
 
@@ -969,11 +1194,6 @@ function stopMinecraft() {
 
     setLastAction(
         "AFK gestoppt"
-    );
-
-
-    console.log(
-        "[MC] AFK Bot gestoppt."
     );
 
     updatePanel();
@@ -1036,12 +1256,10 @@ discordClient.once(
         } catch (error) {
 
             console.error(
-                "[DISCORD ERROR] Panel konnte nicht erstellt werden."
+                "[DISCORD] Panel konnte nicht erstellt werden."
             );
 
-            console.error(
-                error
-            );
+            console.error(error);
         }
     }
 );
@@ -1062,10 +1280,6 @@ discordClient.on(
         }
 
 
-        // ====================================================
-        // BERECHTIGUNG
-        // ====================================================
-
         if (
             interaction.user.id !==
             DISCORD_OWNER_ID
@@ -1084,16 +1298,6 @@ discordClient.on(
         }
 
 
-        console.log(
-            "[DISCORD] Button: " +
-            interaction.customId
-        );
-
-
-        // ====================================================
-        // START
-        // ====================================================
-
         if (
             interaction.customId ===
             "afk_start"
@@ -1102,7 +1306,7 @@ discordClient.on(
             await interaction.reply({
 
                 content:
-                    "Minecraft Bot wird gestartet und nach dem Join kalibriert.",
+                    "Minecraft Bot wird gestartet und danach zum CB6 Portal bewegt.",
 
                 flags:
                     MessageFlags.Ephemeral
@@ -1114,10 +1318,6 @@ discordClient.on(
             return;
         }
 
-
-        // ====================================================
-        // STOPP
-        // ====================================================
 
         if (
             interaction.customId ===
@@ -1140,22 +1340,27 @@ discordClient.on(
         }
 
 
-        // ====================================================
-        // POSITION
-        // ====================================================
-
         if (
             interaction.customId ===
             "afk_position"
         ) {
+
+            const distance =
+                getDistanceToCB6();
+
 
             await interaction.reply({
 
                 content:
                     "Position:\n" +
                     getPosition() +
-                    "\n\nBlickrichtung:\n" +
-                    getRotation(),
+                    "\n\n" +
+                    "Entfernung zu CB6:\n" +
+                    (
+                        distance === null
+                            ? "Unbekannt"
+                            : `${distance.toFixed(3)} Blöcke`
+                    ),
 
                 flags:
                     MessageFlags.Ephemeral
@@ -1164,10 +1369,6 @@ discordClient.on(
             return;
         }
 
-
-        // ====================================================
-        // AKTUALISIEREN
-        // ====================================================
 
         if (
             interaction.customId ===
@@ -1192,7 +1393,6 @@ setInterval(
     () => {
 
         if (panelMessage) {
-
             updatePanel();
         }
 
@@ -1210,10 +1410,7 @@ process.on(
     error => {
 
         console.error(
-            "[SYSTEM ERROR] Uncaught Exception:"
-        );
-
-        console.error(
+            "[SYSTEM ERROR]",
             error
         );
     }
@@ -1225,10 +1422,7 @@ process.on(
     error => {
 
         console.error(
-            "[SYSTEM ERROR] Unhandled Rejection:"
-        );
-
-        console.error(
+            "[SYSTEM ERROR]",
             error
         );
     }
@@ -1294,10 +1488,7 @@ discordClient
         error => {
 
             console.error(
-                "[DISCORD ERROR] Login fehlgeschlagen."
-            );
-
-            console.error(
+                "[DISCORD ERROR]",
                 error
             );
 
