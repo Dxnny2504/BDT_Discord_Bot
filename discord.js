@@ -151,7 +151,7 @@ let manualStop =
 
 
 // ============================================================
-// CB6 ROUTE
+// CB6 KOORDINATEN
 // ============================================================
 
 const PORTAL_AREA = {
@@ -584,7 +584,6 @@ async function startCB6Route() {
 
     await updatePanel();
 
-
     await sleep(
         4000
     );
@@ -610,7 +609,6 @@ async function startCB6Route() {
         "[ROUTE] Position: " +
         getPosition()
     );
-
 
     setLastAction(
         "Portalraum erreicht"
@@ -779,11 +777,9 @@ async function startCB6Route() {
         getPosition()
     );
 
-
     setLastAction(
         "CB6 Portal erreicht"
     );
-
 
     routeRunning =
         false;
@@ -870,6 +866,10 @@ function startMinecraft() {
     );
 
     console.log(
+        "Version: 1.8.9"
+    );
+
+    console.log(
         "========================================"
     );
 
@@ -893,6 +893,9 @@ function startMinecraft() {
 
                 profilesFolder:
                     MC_AUTH_DIR,
+
+                version:
+                    "1.8.9",
 
                 onMsaCode:
                     data => {
@@ -985,11 +988,9 @@ function startMinecraft() {
 
                 await updatePanel();
 
-
                 await sleep(
                     3000
                 );
-
 
                 if (
                     bot &&
