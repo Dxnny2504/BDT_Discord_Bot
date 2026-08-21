@@ -22,8 +22,12 @@ let mcBot = null;
 let mcStarting = false;
 let afkRunning = false;
 let afkStartedAt = null;
-let reconnectTimer = null;
 let panelMessage = null;
+
+let portalRouteRunning = false;
+let portalEntered = false;
+
+let reconnectTimer = null;
 
 let statistics = {
     movements: 0,
@@ -50,6 +54,10 @@ const client = new Client({
     ]
 });
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function getUptime() {
     if (!afkStartedAt) {
         return "00:00:00";
@@ -71,7 +79,11 @@ function getPosition() {
 
     const pos = mcBot.entity.position;
 
-    return `X: ${pos.x.toFixed(1)} | Y: ${pos.y.toFixed(1)} | Z: ${pos.z.toFixed(1)}`;
+    return (
+        `X: ${pos.x.toFixed(2)} | ` +
+        `Y: ${pos.y.toFixed(2)} | ` +
+        `Z: ${pos.z.toFixed(2)}`
+    );
 }
 
 function getMinecraftStatus() {
@@ -120,7 +132,11 @@ function createPanel() {
             },
             {
                 name: "⚡ Letzte Aktion",
-                value: afkRunning ? "AFK aktiv" : "Noch keine",
+                value: portalRouteRunning
+                    ? "CB6 Route läuft"
+                    : afkRunning
+                        ? "AFK aktiv"
+                        : "Noch keine",
                 inline: true
             },
             {
@@ -186,11 +202,213 @@ async function updatePanel() {
     try {
         await panelMessage.edit(createPanel());
     } catch (error) {
-        console.log("[DISCORD] Panel konnte nicht aktualisiert werden:", error.message);
+        console.log(
+            "[DISCORD] Panel konnte nicht aktualisiert werden:",
+            error.message
+        );
     }
 }
 
+function stopMovement() {
+    if (!mcBot) {
+        return;
+    }
+
+    try {
+        mcBot.setControlState("forward", false);
+        mcBot.setControlState("back", false);
+        mcBot.setControlState("left", false);
+        mcBot.setControlState("right", false);
+        mcBot.setControlState("jump", false);
+        mcBot.setControlState("sprint", false);
+    } catch {}
+}
+
+async function lookNorth() {
+    if (!mcBot) {
+        return;
+    }
+
+    await mcBot.look(0, 0, true);
+
+    console.log("[ROUTE] Blickrichtung nach Norden gesetzt.");
+}
+
+async function moveForward(ms) {
+    if (!mcBot) {
+        return;
+    }
+
+    mcBot.setControlState("forward", true);
+    mcBot.setControlState("sprint", true);
+
+    const start = Date.now();
+
+    while (
+        mcBot &&
+        portalRouteRunning &&
+        Date.now() - start < ms
+    ) {
+        statistics.movements++;
+
+        await sleep(50);
+    }
+
+    stopMovement();
+}
+
+async function jump() {
+    if (!mcBot) {
+        return;
+    }
+
+    console.log("[ROUTE] Springe über die Kante...");
+
+    statistics.jumps++;
+
+    mcBot.setControlState("jump", true);
+
+    await sleep(350);
+
+    mcBot.setControlState("jump", false);
+}
+
+async function runCB6Route() {
+    if (!mcBot) {
+        console.log("[ROUTE] Kein Minecraft Bot vorhanden.");
+        return;
+    }
+
+    if (portalRouteRunning) {
+        console.log("[ROUTE] Route läuft bereits.");
+        return;
+    }
+
+    portalRouteRunning = true;
+    portalEntered = false;
+
+    console.log("");
+    console.log("========================================");
+    console.log("        CB6 PORTAL ROUTE");
+    console.log("========================================");
+
+    console.log("[ROUTE] Aktuelle Position:", getPosition());
+
+    console.log("[ROUTE] Sende /portal...");
+
+    mcBot.chat("/portal");
+
+    await sleep(4000);
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    console.log("[ROUTE] Portalraum sollte jetzt geladen sein.");
+    console.log("[ROUTE] Position:", getPosition());
+
+    await lookNorth();
+
+    console.log("[ROUTE] Starte festen Weg über die Kante.");
+
+    /*
+        Alter fester Weg:
+
+        Start:
+        X 309.50
+        Y 66
+        Z 280.00
+
+        Kante:
+        X 309.50
+        Y 68.17
+        Z 278.03
+
+        Danach:
+        X 309.50
+        Y 68.18
+        Z 277.55
+
+        Ziel:
+        X 309.30
+        Y 67
+        Z 276.60
+    */
+
+    console.log("[ROUTE] Ziel X: 309.30");
+    console.log("[ROUTE] Ziel Y: 67.00");
+    console.log("[ROUTE] Ziel Z: 276.60");
+
+    await moveForward(900);
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    await jump();
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    await moveForward(850);
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    stopMovement();
+
+    console.log("[ROUTE] Kante überquert.");
+    console.log("[ROUTE] Position:", getPosition());
+
+    await sleep(300);
+
+    console.log("[ROUTE] Endlauf zum CB6 Portal.");
+
+    await moveForward(900);
+
+    stopMovement();
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    console.log("[ROUTE] CB6 Portal erreicht.");
+    console.log("[ROUTE] Position:", getPosition());
+
+    console.log("[ROUTE] Warte 12 Sekunden.");
+
+    await sleep(12000);
+
+    if (!mcBot || !portalRouteRunning) {
+        return;
+    }
+
+    console.log("[ROUTE] 12 Sekunden vorbei.");
+    console.log("[ROUTE] Sende /home 55.");
+
+    mcBot.chat("/home 55");
+
+    portalEntered = true;
+    portalRouteRunning = false;
+
+    console.log("[ROUTE] /home 55 gesendet.");
+    console.log("[ROUTE] CB6 Ablauf abgeschlossen.");
+
+    await sleep(3000);
+
+    updatePanel();
+}
+
 function stopMinecraft() {
+    portalRouteRunning = false;
+    portalEntered = false;
+    afkRunning = false;
+    afkStartedAt = null;
+
+    stopMovement();
+
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -199,15 +417,11 @@ function stopMinecraft() {
     if (mcBot) {
         try {
             mcBot.quit("AFK Bot gestoppt");
-        } catch (error) {
-            console.log("[MC] Fehler beim Stoppen:", error.message);
-        }
+        } catch {}
     }
 
     mcBot = null;
     mcStarting = false;
-    afkRunning = false;
-    afkStartedAt = null;
 
     updatePanel();
 }
@@ -243,8 +457,8 @@ function startMinecraft() {
     console.log("[MC] Account:", MC_EMAIL);
     console.log("[MC] Host:", MC_HOST);
     console.log("[MC] Port:", MC_PORT);
-    console.log("[MC] Version:", MC_VERSION);
     console.log("[MC] Auth: microsoft");
+    console.log("[MC] Version:", MC_VERSION);
     console.log("[MC] Auth Speicher: /app/minecraft_profiles");
 
     try {
@@ -259,23 +473,45 @@ function startMinecraft() {
             hideErrors: false
         });
     } catch (error) {
-        console.log("[MC ERROR] Bot konnte nicht erstellt werden:", error);
+        console.log("[MC ERROR] Bot konnte nicht erstellt werden:");
+        console.log(error);
+
         mcBot = null;
         mcStarting = false;
+
         updatePanel();
+
         return;
     }
 
-    mcBot.once("spawn", () => {
+    mcBot.once("spawn", async () => {
         mcStarting = false;
 
         console.log("========================================");
-        console.log("[MC] Minecraft Bot verbunden!");
+        console.log("[MC] Minecraft Spawn erfolgreich.");
         console.log("[MC] Spieler:", mcBot.username);
         console.log("[MC] Position:", getPosition());
         console.log("========================================");
 
         updatePanel();
+
+        await sleep(2000);
+
+        if (!mcBot || !afkRunning) {
+            return;
+        }
+
+        console.log("[MC] Starte automatische CB6 Route.");
+
+        runCB6Route().catch(error => {
+            console.log("[ROUTE ERROR]", error);
+
+            stopMovement();
+
+            portalRouteRunning = false;
+
+            updatePanel();
+        });
     });
 
     mcBot.on("login", () => {
@@ -283,74 +519,72 @@ function startMinecraft() {
         updatePanel();
     });
 
-    mcBot.on("kicked", (reason) => {
+    mcBot.on("chat", (username, message) => {
+        console.log(`[MC CHAT] ${username}: ${message}`);
+    });
+
+    mcBot.on("messagestr", message => {
+        console.log(`[MC CHAT] ${message}`);
+    });
+
+    mcBot.on("kicked", reason => {
         console.log("[MC] Bot wurde gekickt:");
         console.log(reason);
 
         statistics.disconnects++;
 
+        stopMovement();
+
         mcBot = null;
         mcStarting = false;
+        portalRouteRunning = false;
 
         updatePanel();
     });
 
-    mcBot.on("end", (reason) => {
-        console.log("[MC] Verbindung beendet:", reason || "Unbekannt");
+    mcBot.on("end", reason => {
+        console.log(
+            "[MC] Verbindung beendet:",
+            reason || "Unbekannt"
+        );
 
         statistics.disconnects++;
 
+        stopMovement();
+
         mcBot = null;
         mcStarting = false;
+        portalRouteRunning = false;
 
         updatePanel();
 
         if (afkRunning) {
-            console.log("[MC] AFK läuft weiter. Reconnect wird vorbereitet.");
-
-            if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-            }
+            console.log("[MC] AFK läuft weiter.");
+            console.log("[MC] Reconnect in 10 Sekunden.");
 
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
+
+                if (!afkRunning) {
+                    return;
+                }
+
                 statistics.reconnects++;
 
-                console.log("[MC] Automatischer Reconnect...");
+                console.log("[MC] Automatischer Reconnect.");
+
                 startMinecraft();
             }, 10000);
         }
     });
 
-    mcBot.on("error", (error) => {
+    mcBot.on("error", error => {
         console.log("[MC ERROR]", error);
         updatePanel();
     });
 
     mcBot.on("move", () => {
         statistics.movements++;
-    });
-
-    mcBot.on("physicTick", () => {
-        if (!mcBot || !afkRunning) {
-            return;
-        }
-
-        if (Math.random() < 0.002) {
-            try {
-                mcBot.setControlState("jump", true);
-
-                setTimeout(() => {
-                    if (mcBot) {
-                        mcBot.setControlState("jump", false);
-                    }
-                }, 250);
-
-                statistics.jumps++;
-            } catch (error) {
-                console.log("[MC] Sprung konnte nicht ausgeführt werden.");
-            }
-        }
     });
 }
 
@@ -361,7 +595,7 @@ client.once("clientReady", () => {
     console.log("[SYSTEM] Prozess bleibt aktiv.");
 });
 
-client.on("messageCreate", async (message) => {
+client.on("messageCreate", async message => {
     if (message.author.bot) {
         return;
     }
@@ -373,17 +607,22 @@ client.on("messageCreate", async (message) => {
     console.log("[DISCORD] !afk empfangen.");
 
     try {
-        panelMessage = await message.channel.send(createPanel());
+        panelMessage = await message.channel.send(
+            createPanel()
+        );
 
         console.log("[DISCORD] AFK Panel erstellt.");
 
         updatePanel();
     } catch (error) {
-        console.log("[DISCORD ERROR] Panel konnte nicht erstellt werden:", error);
+        console.log(
+            "[DISCORD ERROR] Panel konnte nicht erstellt werden:",
+            error
+        );
     }
 });
 
-client.on("interactionCreate", async (interaction) => {
+client.on("interactionCreate", async interaction => {
     if (!interaction.isButton()) {
         return;
     }
@@ -396,7 +635,7 @@ client.on("interactionCreate", async (interaction) => {
         await interaction.deferUpdate();
 
         if (mcBot) {
-            await updatePanel();
+            updatePanel();
             return;
         }
 
@@ -406,6 +645,7 @@ client.on("interactionCreate", async (interaction) => {
         startMinecraft();
 
         setTimeout(updatePanel, 1000);
+
         return;
     }
 
@@ -417,6 +657,7 @@ client.on("interactionCreate", async (interaction) => {
         stopMinecraft();
 
         setTimeout(updatePanel, 500);
+
         return;
     }
 
@@ -425,15 +666,14 @@ client.on("interactionCreate", async (interaction) => {
 
         await interaction.deferUpdate();
 
-        statistics.reconnects++;
-
         stopMinecraft();
 
-        setTimeout(() => {
-            afkRunning = true;
-            afkStartedAt = Date.now();
-            startMinecraft();
-        }, 2000);
+        await sleep(2000);
+
+        afkRunning = true;
+        afkStartedAt = Date.now();
+
+        startMinecraft();
 
         return;
     }
@@ -443,7 +683,8 @@ client.on("interactionCreate", async (interaction) => {
 
         await interaction.deferUpdate();
 
-        await updatePanel();
+        updatePanel();
+
         return;
     }
 
@@ -452,23 +693,26 @@ client.on("interactionCreate", async (interaction) => {
 
         await interaction.deferUpdate();
 
-        await updatePanel();
+        updatePanel();
+
         return;
     }
 });
 
-process.on("uncaughtException", (error) => {
+process.on("uncaughtException", error => {
     console.log("[SYSTEM ERROR] Uncaught Exception:");
     console.log(error);
 });
 
-process.on("unhandledRejection", (error) => {
+process.on("unhandledRejection", error => {
     console.log("[SYSTEM ERROR] Unhandled Rejection:");
     console.log(error);
 });
 
 process.on("SIGTERM", () => {
     console.log("[SYSTEM] SIGTERM empfangen.");
+
+    stopMovement();
 
     if (mcBot) {
         try {
@@ -483,6 +727,8 @@ process.on("SIGTERM", () => {
 
 process.on("SIGINT", () => {
     console.log("[SYSTEM] SIGINT empfangen.");
+
+    stopMovement();
 
     if (mcBot) {
         try {
