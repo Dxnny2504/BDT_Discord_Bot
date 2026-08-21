@@ -46,7 +46,7 @@ const MC_PORT =
 
 
 // ============================================================
-// PRÜFEN
+// VARIABLEN PRÜFEN
 // ============================================================
 
 function checkEnvironment() {
@@ -67,12 +67,23 @@ function checkEnvironment() {
 
     if (missing.length > 0) {
 
+        console.error("");
         console.error(
-            "Fehlende Railway Variablen:"
+            "========================================"
+        );
+        console.error(
+            "FEHLENDE RAILWAY VARIABLEN"
+        );
+        console.error(
+            "========================================"
         );
 
         console.error(
             missing.join(", ")
+        );
+
+        console.error(
+            "========================================"
         );
 
         process.exit(1);
@@ -106,14 +117,16 @@ try {
         "[AUTH ERROR] Auth Ordner konnte nicht erstellt werden."
     );
 
-    console.error(error);
+    console.error(
+        error
+    );
 
     process.exit(1);
 }
 
 
 // ============================================================
-// DISCORD
+// DISCORD CLIENT
 // ============================================================
 
 const discordClient =
@@ -126,7 +139,7 @@ const discordClient =
 
 
 // ============================================================
-// STATUS
+// MINECRAFT STATUS
 // ============================================================
 
 let bot = null;
@@ -134,6 +147,8 @@ let bot = null;
 let starting = false;
 
 let routeRunning = false;
+
+let teleportWaiting = false;
 
 let panelMessage = null;
 
@@ -144,11 +159,9 @@ let lastAction =
 
 let manualStop = false;
 
-let teleportWaiting = false;
-
 
 // ============================================================
-// ROUTE
+// ROUTENPUNKTE AUS DEM VIDEO
 // ============================================================
 
 const ROUTE_POINTS = [
@@ -198,7 +211,9 @@ const ROUTE_POINTS = [
 ];
 
 
-// Position nach dem CB6 Teleport
+// ============================================================
+// POSITION NACH CB6 TELEPORT
+// ============================================================
 
 const CB6_AFTER_TELEPORT = {
     x: 215.000,
@@ -357,12 +372,40 @@ function stopMovement() {
         return;
     }
 
-    bot.clearControlStates();
+    bot.setControlState(
+        "forward",
+        false
+    );
+
+    bot.setControlState(
+        "back",
+        false
+    );
+
+    bot.setControlState(
+        "left",
+        false
+    );
+
+    bot.setControlState(
+        "right",
+        false
+    );
+
+    bot.setControlState(
+        "jump",
+        false
+    );
+
+    bot.setControlState(
+        "sprint",
+        false
+    );
 }
 
 
 // ============================================================
-// BLICKRICHTUNG BERECHNEN
+// AUF PUNKT SCHAUEN
 // ============================================================
 
 async function lookAtPoint(point) {
@@ -388,7 +431,7 @@ async function lookAtPoint(point) {
         position.z;
 
 
-    const horizontalDistance =
+    const horizontal =
         Math.sqrt(
             dx * dx +
             dz * dz
@@ -405,7 +448,7 @@ async function lookAtPoint(point) {
     const pitch =
         Math.atan2(
             dy,
-            horizontalDistance
+            horizontal
         );
 
 
@@ -435,10 +478,6 @@ async function lookAtPoint(point) {
         300
     );
 
-
-    console.log(
-        "[ROUTE] Blickrichtung gesetzt."
-    );
 
     console.log(
         "[ROUTE] Aktuelle Rotation: " +
@@ -481,10 +520,7 @@ async function moveToPoint(point) {
 
 
     console.log(
-        "[ROUTE] Aktuelle Position:"
-    );
-
-    console.log(
+        "[ROUTE] Aktuelle Position: " +
         getPosition()
     );
 
@@ -503,10 +539,6 @@ async function moveToPoint(point) {
     );
 
 
-    // ========================================================
-    // BLICKRICHTUNG
-    // ========================================================
-
     const lookSuccess =
         await lookAtPoint(
             point
@@ -522,10 +554,6 @@ async function moveToPoint(point) {
         return false;
     }
 
-
-    // ========================================================
-    // LAUFEN
-    // ========================================================
 
     setLastAction(
         "Laufe zu " +
@@ -557,7 +585,9 @@ async function moveToPoint(point) {
     while (
         bot &&
         routeRunning &&
-        Date.now() - start < timeout
+        Date.now() -
+        start <
+        timeout
     ) {
 
         const distance =
@@ -570,10 +600,6 @@ async function moveToPoint(point) {
             distance !== null &&
             distance <= 0.55
         ) {
-
-            console.log(
-                "[ROUTE] Wegpunkt erreicht."
-            );
 
             break;
         }
@@ -588,12 +614,10 @@ async function moveToPoint(point) {
             lastLog =
                 Date.now();
 
-
             console.log(
                 "[ROUTE] Position: " +
                 getPosition()
             );
-
 
             if (
                 distance !== null
@@ -632,12 +656,10 @@ async function moveToPoint(point) {
         "[ROUTE] Bewegung beendet."
     );
 
-
     console.log(
         "[ROUTE] Endposition: " +
         getPosition()
     );
-
 
     console.log(
         "[ROUTE] Restentfernung: " +
@@ -676,23 +698,18 @@ async function moveToPoint(point) {
 
 
 // ============================================================
-// ROUTE FEHLER
+// DURCH DAS CB6 PORTAL LAUFEN
 // ============================================================
 
-function routeFailed(reason) {
+async function enterCB6Portal() {
 
-    stopMovement();
+    if (
+        !bot ||
+        !routeRunning
+    ) {
 
-    routeRunning =
-        false;
-
-    teleportWaiting =
-        false;
-
-
-    setLastAction(
-        reason
-    );
+        return false;
+    }
 
 
     console.log("");
@@ -701,16 +718,122 @@ function routeFailed(reason) {
     );
 
     console.log(
-        "        ROUTE FEHLGESCHLAGEN"
+        "        CB6 PORTAL BETRETEN"
     );
 
     console.log(
         "========================================"
     );
 
+
     console.log(
-        "[ROUTE] " +
-        reason
+        "[ROUTE] Ausgangspunkt: " +
+        getPosition()
+    );
+
+
+    console.log(
+        "[ROUTE] Portal:"
+    );
+
+    console.log(
+        "X: " +
+        ROUTE_POINTS[5].x +
+        " | Y: " +
+        ROUTE_POINTS[5].y +
+        " | Z: " +
+        ROUTE_POINTS[5].z
+    );
+
+
+    await lookAtPoint(
+        ROUTE_POINTS[5]
+    );
+
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return false;
+    }
+
+
+    setLastAction(
+        "Laufe DURCH das CB6 Portal"
+    );
+
+
+    console.log(
+        "[ROUTE] Laufe jetzt durch das Portal."
+    );
+
+
+    bot.setControlState(
+        "forward",
+        true
+    );
+
+    bot.setControlState(
+        "sprint",
+        false
+    );
+
+
+    const start =
+        Date.now();
+
+    const timeout =
+        5000;
+
+
+    let lastLog =
+        0;
+
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() -
+        start <
+        timeout
+    ) {
+
+        if (
+            Date.now() -
+            lastLog >=
+            500
+        ) {
+
+            lastLog =
+                Date.now();
+
+
+            console.log(
+                "[ROUTE] Portalbewegung: " +
+                getPosition()
+            );
+        }
+
+
+        await sleep(
+            50
+        );
+    }
+
+
+    stopMovement();
+
+
+    if (!bot) {
+
+        return false;
+    }
+
+
+    console.log(
+        "[ROUTE] Portalbewegung beendet."
     );
 
     console.log(
@@ -718,17 +841,25 @@ function routeFailed(reason) {
         getPosition()
     );
 
-    console.log(
-        "========================================"
+
+    teleportWaiting =
+        true;
+
+
+    setLastAction(
+        "Warte auf CB6 Teleport"
     );
 
 
-    updatePanel();
+    await updatePanel();
+
+
+    return true;
 }
 
 
 // ============================================================
-// TELEPORT WARTEN
+// TELEPORT ERKENNEN
 // ============================================================
 
 async function waitForTeleport() {
@@ -755,7 +886,9 @@ async function waitForTeleport() {
     while (
         bot &&
         routeRunning &&
-        Date.now() - start < timeout
+        Date.now() -
+        start <
+        timeout
     ) {
 
         const distance =
@@ -783,7 +916,7 @@ async function waitForTeleport() {
             );
 
             console.log(
-                "[ROUTE] Position: " +
+                "[ROUTE] Neue Position: " +
                 getPosition()
             );
 
@@ -793,7 +926,7 @@ async function waitForTeleport() {
 
 
             setLastAction(
-                "CB6 Teleport erkannt"
+                "CB6 erreicht"
             );
 
 
@@ -856,7 +989,7 @@ async function waitForTeleport() {
 
 
     console.log(
-        "[ROUTE] Kein Teleport erkannt."
+        "[ROUTE] Kein CB6 Teleport erkannt."
     );
 
 
@@ -868,7 +1001,59 @@ async function waitForTeleport() {
 
 
 // ============================================================
-// CB6 ROUTE
+// ROUTE FEHLER
+// ============================================================
+
+function routeFailed(reason) {
+
+    stopMovement();
+
+    routeRunning =
+        false;
+
+    teleportWaiting =
+        false;
+
+
+    setLastAction(
+        reason
+    );
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        ROUTE FEHLGESCHLAGEN"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "[ROUTE] " +
+        reason
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    updatePanel();
+}
+
+
+// ============================================================
+// KOMPLETTE CB6 ROUTE
 // ============================================================
 
 async function startCB6Route() {
@@ -904,7 +1089,7 @@ async function startCB6Route() {
 
 
     // ========================================================
-    // PORTAL
+    // /PORTAL
     // ========================================================
 
     setLastAction(
@@ -1045,57 +1230,21 @@ async function startCB6Route() {
 
 
     // ========================================================
-    // CB6 PORTAL
+    // DURCH DAS CB6 PORTAL
     // ========================================================
 
     success =
-        await moveToPoint(
-            ROUTE_POINTS[5]
-        );
+        await enterCB6Portal();
 
 
     if (!success) {
 
         routeFailed(
-            "CB6 Portal nicht erreicht"
+            "CB6 Portal konnte nicht betreten werden"
         );
 
         return;
     }
-
-
-    stopMovement();
-
-
-    teleportWaiting =
-        true;
-
-
-    setLastAction(
-        "CB6 Portal erreicht"
-    );
-
-
-    await updatePanel();
-
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "        CB6 PORTAL ERREICHT"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "[ROUTE] Position: " +
-        getPosition()
-    );
 
 
     // ========================================================
@@ -1468,6 +1617,9 @@ function startMinecraft() {
         routeRunning =
             false;
 
+        teleportWaiting =
+            false;
+
 
         setLastAction(
             "Minecraft Start fehlgeschlagen"
@@ -1480,7 +1632,7 @@ function startMinecraft() {
 
 
 // ============================================================
-// STOPP
+// MINECRAFT STOPP
 // ============================================================
 
 function stopMinecraft() {
@@ -1542,17 +1694,12 @@ function createPanel() {
         );
 
 
-    let distance =
-        null;
-
-
-    if (bot) {
-
-        distance =
-            horizontalDistanceToPoint(
+    const distance =
+        bot
+            ? horizontalDistanceToPoint(
                 ROUTE_POINTS[5]
-            );
-    }
+            )
+            : null;
 
 
     const embed =
@@ -1603,6 +1750,15 @@ function createPanel() {
                         routeRunning
                             ? "🟡 Aktiv"
                             : "⚪ Inaktiv",
+                    inline: true
+                },
+
+                {
+                    name: "Teleport",
+                    value:
+                        teleportWaiting
+                            ? "🟡 Warte"
+                            : "⚪ Nein",
                     inline: true
                 },
 
@@ -1687,7 +1843,7 @@ function createPanel() {
 
 
 // ============================================================
-// PANEL UPDATE
+// PANEL AKTUALISIEREN
 // ============================================================
 
 async function updatePanel() {
@@ -1786,7 +1942,7 @@ discordClient.once(
 
 
 // ============================================================
-// BUTTONS
+// DISCORD BUTTONS
 // ============================================================
 
 discordClient.on(
@@ -1915,7 +2071,7 @@ discordClient.on(
 
 
 // ============================================================
-// AUTO UPDATE
+// PANEL AUTO UPDATE
 // ============================================================
 
 setInterval(
