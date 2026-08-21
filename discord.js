@@ -12,11 +12,9 @@ const {
     MessageFlags
 } = require("discord.js");
 
-const { Vec3 } = require("vec3");
-
 
 // ============================================================
-// RAILWAY
+// RAILWAY VARIABLEN
 // ============================================================
 
 const DISCORD_TOKEN =
@@ -48,7 +46,7 @@ const MC_PORT =
 
 
 // ============================================================
-// PRÜFEN
+// PRÜFUNG
 // ============================================================
 
 function checkEnvironment() {
@@ -70,7 +68,10 @@ function checkEnvironment() {
     if (missing.length > 0) {
 
         console.error(
-            "[SYSTEM] Fehlende Variablen:",
+            "Fehlende Railway Variablen:"
+        );
+
+        console.error(
             missing.join(", ")
         );
 
@@ -94,10 +95,15 @@ try {
         }
     );
 
+    console.log(
+        "[AUTH] Speicher: " +
+        MC_AUTH_DIR
+    );
+
 } catch (error) {
 
     console.error(
-        "[AUTH] Auth Ordner konnte nicht erstellt werden."
+        "[AUTH] Ordner konnte nicht erstellt werden."
     );
 
     console.error(error);
@@ -120,7 +126,7 @@ const discordClient =
 
 
 // ============================================================
-// MINECRAFT
+// STATUS
 // ============================================================
 
 let bot = null;
@@ -138,15 +144,39 @@ let lastAction =
 
 let manualStop = false;
 
+let waitingForTeleport = false;
+
+let homeCommandSent = false;
+
 
 // ============================================================
-// CB6 ZIEL
+// KOORDINATEN
 // ============================================================
+
+// Ausgangsposition nach /portal
+
+const PORTAL_START = {
+    x: 325.000,
+    y: 67.000,
+    z: 280.000
+};
+
+
+// Exakte Portalposition aus dem Video
 
 const CB6_PORTAL = {
-    x: 309.348,
-    y: 67,
-    z: 276.376
+    x: 308.811,
+    y: 67.000,
+    z: 276.557
+};
+
+
+// Position nach dem Teleport laut Video
+
+const CB6_AFTER_TELEPORT = {
+    x: 215.000,
+    y: 67.000,
+    z: 371.000
 };
 
 
@@ -157,10 +187,11 @@ const CB6_PORTAL = {
 function sleep(ms) {
 
     return new Promise(
-        resolve => setTimeout(
-            resolve,
-            ms
-        )
+        resolve =>
+            setTimeout(
+                resolve,
+                ms
+            )
     );
 }
 
@@ -190,14 +221,19 @@ function getPosition() {
         bot.entity.position;
 
     return (
-        `X: ${p.x.toFixed(3)} | ` +
-        `Y: ${p.y.toFixed(3)} | ` +
-        `Z: ${p.z.toFixed(3)}`
+        "X: " +
+        p.x.toFixed(3) +
+        " | Y: " +
+        p.y.toFixed(3) +
+        " | Z: " +
+        p.z.toFixed(3)
     );
 }
 
 
-function getDistanceToCB6() {
+function getDistance(
+    target
+) {
 
     if (
         !bot ||
@@ -210,10 +246,12 @@ function getDistanceToCB6() {
         bot.entity.position;
 
     const dx =
-        CB6_PORTAL.x - p.x;
+        target.x -
+        p.x;
 
     const dz =
-        CB6_PORTAL.z - p.z;
+        target.z -
+        p.z;
 
     return Math.sqrt(
         dx * dx +
@@ -262,6 +300,1035 @@ function getRuntime() {
 
 
 // ============================================================
+// AUF PORTAL SCHAUEN
+// ============================================================
+
+async function lookAtPortal() {
+
+    if (!bot) {
+        return;
+    }
+
+    const position =
+        bot.entity.position;
+
+    const dx =
+        CB6_PORTAL.x -
+        position.x;
+
+    const dz =
+        CB6_PORTAL.z -
+        position.z;
+
+
+    const yaw =
+        Math.atan2(
+            -dx,
+            -dz
+        );
+
+
+    console.log(
+        "[ROUTE] Berechne Blickrichtung zum CB6 Portal."
+    );
+
+
+    await bot.look(
+        yaw,
+        0,
+        true
+    );
+
+
+    await sleep(
+        500
+    );
+
+
+    console.log(
+        "[ROUTE] Blickrichtung gesetzt."
+    );
+}
+
+
+// ============================================================
+// VORWÄRTS
+// ============================================================
+
+async function moveForward() {
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+        return;
+    }
+
+    bot.setControlState(
+        "forward",
+        true
+    );
+
+    bot.setControlState(
+        "sprint",
+        true
+    );
+}
+
+
+// ============================================================
+// BEWEGUNG STOPPEN
+// ============================================================
+
+function stopMovement() {
+
+    if (!bot) {
+        return;
+    }
+
+    bot.setControlState(
+        "forward",
+        false
+    );
+
+    bot.setControlState(
+        "sprint",
+        false
+    );
+
+    bot.setControlState(
+        "jump",
+        false
+    );
+}
+
+
+// ============================================================
+// PORTAL BETRETEN
+// ============================================================
+
+async function walkToCB6Portal() {
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+        return false;
+    }
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        CB6 PORTAL ROUTE"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    console.log(
+        "[ROUTE] Startposition:"
+    );
+
+    console.log(
+        getPosition()
+    );
+
+
+    console.log(
+        "[ROUTE] Zielposition:"
+    );
+
+    console.log(
+        "X: " +
+        CB6_PORTAL.x +
+        " | Y: " +
+        CB6_PORTAL.y +
+        " | Z: " +
+        CB6_PORTAL.z
+    );
+
+
+    setLastAction(
+        "Laufe zum CB6 Portal"
+    );
+
+
+    await lookAtPortal();
+
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+        return false;
+    }
+
+
+    moveForward();
+
+
+    const start =
+        Date.now();
+
+
+    const maximumTime =
+        8000;
+
+
+    let lastPositionLog =
+        0;
+
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() - start < maximumTime
+    ) {
+
+        const distance =
+            getDistance(
+                CB6_PORTAL
+            );
+
+
+        if (
+            distance !== null &&
+            distance <= 0.65
+        ) {
+
+            console.log(
+                "[ROUTE] Portalposition erreicht."
+            );
+
+            console.log(
+                "[ROUTE] Entfernung: " +
+                distance.toFixed(3)
+            );
+
+            break;
+        }
+
+
+        if (
+            Date.now() -
+            lastPositionLog >=
+            500
+        ) {
+
+            lastPositionLog =
+                Date.now();
+
+
+            console.log(
+                "[ROUTE] Position: " +
+                getPosition()
+            );
+
+
+            if (
+                distance !== null
+            ) {
+
+                console.log(
+                    "[ROUTE] Entfernung: " +
+                    distance.toFixed(3)
+                );
+            }
+        }
+
+
+        await sleep(
+            50
+        );
+    }
+
+
+    stopMovement();
+
+
+    if (!bot) {
+        return false;
+    }
+
+
+    console.log(
+        "[ROUTE] Bewegung zum Portal beendet."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+
+    waitingForTeleport =
+        true;
+
+    setLastAction(
+        "Warte auf CB6 Teleport"
+    );
+
+
+    return true;
+}
+
+
+// ============================================================
+// TELEPORT ERKENNEN
+// ============================================================
+
+async function waitForCB6Teleport() {
+
+    if (!bot) {
+        return false;
+    }
+
+
+    console.log("");
+    console.log(
+        "[ROUTE] Warte auf Teleport nach CB6..."
+    );
+
+
+    const start =
+        Date.now();
+
+
+    const maximumWait =
+        20000;
+
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() - start < maximumWait
+    ) {
+
+        const position =
+            bot.entity.position;
+
+
+        const dx =
+            Math.abs(
+                position.x -
+                CB6_PORTAL.x
+            );
+
+        const dz =
+            Math.abs(
+                position.z -
+                CB6_PORTAL.z
+            );
+
+
+        if (
+            dx > 30 ||
+            dz > 30
+        ) {
+
+            console.log("");
+            console.log(
+                "========================================"
+            );
+
+            console.log(
+                "        CB6 TELEPORT ERKANNT"
+            );
+
+            console.log(
+                "========================================"
+            );
+
+            console.log(
+                "[ROUTE] Neue Position:"
+            );
+
+            console.log(
+                getPosition()
+            );
+
+
+            waitingForTeleport =
+                false;
+
+
+            setLastAction(
+                "CB6 erreicht"
+            );
+
+
+            return true;
+        }
+
+
+        await sleep(
+            100
+        );
+    }
+
+
+    waitingForTeleport =
+        false;
+
+
+    console.log(
+        "[ROUTE] Kein Teleport erkannt."
+    );
+
+
+    setLastAction(
+        "Teleport nicht erkannt"
+    );
+
+
+    return false;
+}
+
+
+// ============================================================
+// /HOME 55
+// ============================================================
+
+async function sendHome55() {
+
+    if (
+        !bot ||
+        homeCommandSent
+    ) {
+        return;
+    }
+
+
+    homeCommandSent =
+        true;
+
+
+    console.log(
+        "[ROUTE] Warte vor /home 55..."
+    );
+
+
+    setLastAction(
+        "Warte vor /home 55"
+    );
+
+
+    await updatePanel();
+
+
+    await sleep(
+        3000
+    );
+
+
+    if (!bot) {
+        return;
+    }
+
+
+    console.log(
+        "[ROUTE] Sende /home 55..."
+    );
+
+
+    bot.chat(
+        "/home 55"
+    );
+
+
+    setLastAction(
+        "/home 55 gesendet"
+    );
+
+
+    await updatePanel();
+
+
+    console.log(
+        "[ROUTE] /home 55 gesendet."
+    );
+}
+
+
+// ============================================================
+// KOMPLETTE ROUTE
+// ============================================================
+
+async function startCB6Route() {
+
+    if (
+        !bot ||
+        routeRunning
+    ) {
+        return;
+    }
+
+
+    routeRunning =
+        true;
+
+    homeCommandSent =
+        false;
+
+    waitingForTeleport =
+        false;
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        CB6 ABLAUF START"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    // ========================================================
+    // /PORTAL
+    // ========================================================
+
+    setLastAction(
+        "Sende /portal"
+    );
+
+    await updatePanel();
+
+
+    console.log(
+        "[ROUTE] Sende /portal..."
+    );
+
+
+    bot.chat(
+        "/portal"
+    );
+
+
+    await sleep(
+        5000
+    );
+
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+        return;
+    }
+
+
+    console.log(
+        "[ROUTE] Portalraum:"
+    );
+
+    console.log(
+        getPosition()
+    );
+
+
+    // ========================================================
+    // CB6 PORTAL
+    // ========================================================
+
+    await walkToCB6Portal();
+
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+        return;
+    }
+
+
+    // ========================================================
+    // TELEPORT
+    // ========================================================
+
+    const teleported =
+        await waitForCB6Teleport();
+
+
+    if (
+        !teleported ||
+        !bot ||
+        !routeRunning
+    ) {
+
+        routeRunning =
+            false;
+
+        await updatePanel();
+
+        return;
+    }
+
+
+    // ========================================================
+    // /HOME 55
+    // ========================================================
+
+    await sendHome55();
+
+
+    routeRunning =
+        false;
+
+
+    setLastAction(
+        "CB6 Ablauf abgeschlossen"
+    );
+
+
+    await updatePanel();
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        CB6 ABLAUF FERTIG"
+    );
+
+    console.log(
+        "========================================"
+    );
+}
+
+
+// ============================================================
+// MINECRAFT START
+// ============================================================
+
+function startMinecraft() {
+
+    if (starting) {
+
+        console.log(
+            "[MC] Minecraft startet bereits."
+        );
+
+        return;
+    }
+
+
+    if (bot) {
+
+        console.log(
+            "[MC] Minecraft läuft bereits."
+        );
+
+        return;
+    }
+
+
+    starting =
+        true;
+
+    manualStop =
+        false;
+
+    routeRunning =
+        false;
+
+    startedAt =
+        Date.now();
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        MINECRAFT START"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "Account: " +
+        MC_USERNAME
+    );
+
+    console.log(
+        "Server: " +
+        MC_HOST
+    );
+
+    console.log(
+        "Port: " +
+        MC_PORT
+    );
+
+    console.log(
+        "Auth: " +
+        MC_AUTH
+    );
+
+    console.log(
+        "Auth Ordner: " +
+        MC_AUTH_DIR
+    );
+
+    console.log(
+        "Version: 1.8.9"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    try {
+
+        bot =
+            mineflayer.createBot({
+
+                host:
+                    MC_HOST,
+
+                port:
+                    MC_PORT,
+
+                username:
+                    MC_USERNAME,
+
+                auth:
+                    MC_AUTH,
+
+                profilesFolder:
+                    MC_AUTH_DIR,
+
+                version:
+                    "1.8.9",
+
+                onMsaCode:
+                    data => {
+
+                        console.log("");
+                        console.log(
+                            "========================================"
+                        );
+
+                        console.log(
+                            "        MICROSOFT LOGIN"
+                        );
+
+                        console.log(
+                            "========================================"
+                        );
+
+
+                        if (
+                            data.verification_uri
+                        ) {
+
+                            console.log(
+                                "Login Seite: " +
+                                data.verification_uri
+                            );
+                        }
+
+
+                        if (
+                            data.user_code
+                        ) {
+
+                            console.log(
+                                "Code: " +
+                                data.user_code
+                            );
+                        }
+
+
+                        console.log(
+                            "========================================"
+                        );
+                    }
+            });
+
+
+        // ====================================================
+        // LOGIN
+        // ====================================================
+
+        bot.once(
+            "login",
+            async () => {
+
+                starting =
+                    false;
+
+
+                console.log(
+                    "Minecraft Login erfolgreich."
+                );
+
+
+                setLastAction(
+                    "Minecraft Login erfolgreich"
+                );
+
+
+                await updatePanel();
+            }
+        );
+
+
+        // ====================================================
+        // SPAWN
+        // ====================================================
+
+        bot.once(
+            "spawn",
+            async () => {
+
+                starting =
+                    false;
+
+
+                console.log(
+                    "Minecraft Spawn erfolgreich."
+                );
+
+
+                console.log(
+                    "Minecraft Bot ist jetzt im Spiel."
+                );
+
+
+                setLastAction(
+                    "Im Spiel"
+                );
+
+
+                await updatePanel();
+
+
+                await sleep(
+                    3000
+                );
+
+
+                if (
+                    bot &&
+                    !manualStop
+                ) {
+
+                    startCB6Route();
+                }
+            }
+        );
+
+
+        // ====================================================
+        // CHAT
+        // ====================================================
+
+        bot.on(
+            "messagestr",
+            message => {
+
+                console.log(
+                    "[MC CHAT] " +
+                    message
+                );
+            }
+        );
+
+
+        // ====================================================
+        // KICK
+        // ====================================================
+
+        bot.on(
+            "kicked",
+            reason => {
+
+                console.log("");
+                console.log(
+                    "[MC] Bot wurde gekickt."
+                );
+
+                console.log(
+                    "[MC] Grund:"
+                );
+
+                console.log(
+                    reason
+                );
+
+
+                setLastAction(
+                    "Minecraft gekickt"
+                );
+
+
+                updatePanel();
+            }
+        );
+
+
+        // ====================================================
+        // ERROR
+        // ====================================================
+
+        bot.on(
+            "error",
+            error => {
+
+                console.error(
+                    "[MC ERROR]"
+                );
+
+                console.error(
+                    error
+                );
+
+
+                setLastAction(
+                    "Minecraft Fehler"
+                );
+
+
+                updatePanel();
+            }
+        );
+
+
+        // ====================================================
+        // END
+        // ====================================================
+
+        bot.on(
+            "end",
+            () => {
+
+                console.log(
+                    "[MC] Minecraft Verbindung beendet."
+                );
+
+
+                bot =
+                    null;
+
+                starting =
+                    false;
+
+                routeRunning =
+                    false;
+
+                waitingForTeleport =
+                    false;
+
+
+                setLastAction(
+                    "Minecraft Verbindung beendet"
+                );
+
+
+                updatePanel();
+            }
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "[MC ERROR] Minecraft konnte nicht gestartet werden."
+        );
+
+        console.error(
+            error
+        );
+
+
+        bot =
+            null;
+
+        starting =
+            false;
+
+        routeRunning =
+            false;
+
+
+        setLastAction(
+            "Minecraft Start fehlgeschlagen"
+        );
+
+
+        updatePanel();
+    }
+}
+
+
+// ============================================================
+// STOPP
+// ============================================================
+
+function stopMinecraft() {
+
+    manualStop =
+        true;
+
+    routeRunning =
+        false;
+
+    waitingForTeleport =
+        false;
+
+    startedAt =
+        null;
+
+
+    if (bot) {
+
+        try {
+
+            bot.clearControlStates();
+
+            bot.quit(
+                "AFK Bot gestoppt"
+            );
+
+        } catch {}
+    }
+
+
+    bot =
+        null;
+
+    starting =
+        false;
+
+
+    setLastAction(
+        "AFK gestoppt"
+    );
+
+
+    updatePanel();
+}
+
+
+// ============================================================
 // DISCORD PANEL
 // ============================================================
 
@@ -273,8 +1340,12 @@ function createPanel() {
             bot.entity
         );
 
+
     const distance =
-        getDistanceToCB6();
+        getDistance(
+            CB6_PORTAL
+        );
+
 
     const embed =
         new EmbedBuilder()
@@ -310,7 +1381,7 @@ function createPanel() {
                 },
 
                 {
-                    name: "Entfernung zu CB6",
+                    name: "CB6 Entfernung",
                     value:
                         distance === null
                             ? "Unbekannt"
@@ -322,8 +1393,8 @@ function createPanel() {
                     name: "Route",
                     value:
                         routeRunning
-                            ? "🟡 Zum CB6 Portal"
-                            : "⚪ Keine Route",
+                            ? "🟡 Aktiv"
+                            : "⚪ Inaktiv",
                     inline: true
                 },
 
@@ -408,7 +1479,7 @@ function createPanel() {
 
 
 // ============================================================
-// PANEL UPDATE
+// DISCORD PANEL AKTUALISIEREN
 // ============================================================
 
 async function updatePanel() {
@@ -416,6 +1487,7 @@ async function updatePanel() {
     if (!panelMessage) {
         return;
     }
+
 
     try {
 
@@ -428,775 +1500,7 @@ async function updatePanel() {
         console.error(
             "[DISCORD] Panel Update fehlgeschlagen."
         );
-
-        console.error(error);
     }
-}
-
-
-// ============================================================
-// /PORTAL
-// ============================================================
-
-async function enterPortalRoom() {
-
-    if (!bot) {
-        return false;
-    }
-
-    setLastAction(
-        "/portal"
-    );
-
-    console.log(
-        "[ROUTE] Sende /portal..."
-    );
-
-    bot.chat(
-        "/portal"
-    );
-
-    await sleep(
-        5000
-    );
-
-    if (!bot) {
-        return false;
-    }
-
-    console.log(
-        "[ROUTE] Portalraum erreicht."
-    );
-
-    console.log(
-        "[ROUTE] Position: " +
-        getPosition()
-    );
-
-    return true;
-}
-
-
-// ============================================================
-// ZIELBLICKRICHTUNG
-// ============================================================
-
-async function lookAtCB6() {
-
-    if (!bot) {
-        return false;
-    }
-
-    const target =
-        new Vec3(
-            CB6_PORTAL.x,
-            CB6_PORTAL.y,
-            CB6_PORTAL.z
-        );
-
-    console.log(
-        "[ROUTE] Drehe direkt auf das CB6 Portal."
-    );
-
-    await bot.lookAt(
-        target,
-        true
-    );
-
-    await sleep(500);
-
-    console.log(
-        "[ROUTE] Blickrichtung auf Ziel gesetzt."
-    );
-
-    return true;
-}
-
-
-// ============================================================
-// ZUM ZIEL LAUFEN
-// ============================================================
-
-async function walkToCB6() {
-
-    if (!bot) {
-        return false;
-    }
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "        LAUFE ZUM CB6 PORTAL"
-    );
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "[ROUTE] Startposition: " +
-        getPosition()
-    );
-
-    console.log(
-        "[ROUTE] Ziel:"
-    );
-
-    console.log(
-        `X: ${CB6_PORTAL.x} | ` +
-        `Y: ${CB6_PORTAL.y} | ` +
-        `Z: ${CB6_PORTAL.z}`
-    );
-
-
-    await lookAtCB6();
-
-
-    if (!bot) {
-        return false;
-    }
-
-
-    bot.setControlState(
-        "forward",
-        true
-    );
-
-    bot.setControlState(
-        "sprint",
-        true
-    );
-
-
-    const maxRunTime =
-        5000;
-
-    const start =
-        Date.now();
-
-
-    let lastLog =
-        0;
-
-
-    while (
-        bot &&
-        routeRunning &&
-        Date.now() - start < maxRunTime
-    ) {
-
-        const distance =
-            getDistanceToCB6();
-
-
-        if (
-            distance !== null &&
-            distance <= 1.0
-        ) {
-
-            console.log("");
-            console.log(
-                "[ROUTE] Zielbereich erreicht."
-            );
-
-            console.log(
-                "[ROUTE] Entfernung: " +
-                distance.toFixed(3)
-            );
-
-            break;
-        }
-
-
-        if (
-            Date.now() - lastLog >= 500
-        ) {
-
-            lastLog =
-                Date.now();
-
-            console.log(
-                "[ROUTE] Position: " +
-                getPosition()
-            );
-
-            if (distance !== null) {
-
-                console.log(
-                    "[ROUTE] Entfernung: " +
-                    distance.toFixed(3)
-                );
-            }
-        }
-
-
-        await sleep(
-            50
-        );
-    }
-
-
-    bot.setControlState(
-        "forward",
-        false
-    );
-
-    bot.setControlState(
-        "sprint",
-        false
-    );
-
-
-    if (!bot) {
-        return false;
-    }
-
-
-    const finalDistance =
-        getDistanceToCB6();
-
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "[ROUTE] Bewegung beendet."
-    );
-
-    console.log(
-        "[ROUTE] Position: " +
-        getPosition()
-    );
-
-    console.log(
-        "[ROUTE] Entfernung zum CB6 Portal: " +
-        (
-            finalDistance === null
-                ? "Unbekannt"
-                : finalDistance.toFixed(3)
-        )
-    );
-
-    console.log(
-        "========================================"
-    );
-
-
-    if (
-        finalDistance !== null &&
-        finalDistance <= 1.5
-    ) {
-
-        setLastAction(
-            "CB6 Portal erreicht"
-        );
-
-        return true;
-    }
-
-
-    setLastAction(
-        "CB6 Ziel nicht erreicht"
-    );
-
-    return false;
-}
-
-
-// ============================================================
-// CB6 ROUTE
-// ============================================================
-
-async function startCB6Route() {
-
-    if (
-        !bot ||
-        routeRunning
-    ) {
-        return;
-    }
-
-    routeRunning =
-        true;
-
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "        CB6 ROUTE"
-    );
-    console.log(
-        "========================================"
-    );
-
-
-    setLastAction(
-        "Starte CB6 Route"
-    );
-
-    await updatePanel();
-
-
-    // ========================================================
-    // PORTAL
-    // ========================================================
-
-    const portalSuccess =
-        await enterPortalRoom();
-
-
-    if (
-        !portalSuccess ||
-        !bot ||
-        !routeRunning
-    ) {
-
-        routeRunning =
-            false;
-
-        return;
-    }
-
-
-    setLastAction(
-        "Portalraum erreicht"
-    );
-
-    await updatePanel();
-
-
-    // ========================================================
-    // ZUM CB6 PORTAL
-    // ========================================================
-
-    const success =
-        await walkToCB6();
-
-
-    if (
-        success &&
-        bot
-    ) {
-
-        console.log(
-            "[ROUTE] CB6 Portal erfolgreich erreicht."
-        );
-
-        routeRunning =
-            false;
-
-        setLastAction(
-            "CB6 Portal erreicht"
-        );
-
-    } else {
-
-        console.log(
-            "[ROUTE] CB6 Portal nicht erreicht."
-        );
-
-        routeRunning =
-            false;
-
-        setLastAction(
-            "CB6 Route fehlgeschlagen"
-        );
-    }
-
-
-    await updatePanel();
-}
-
-
-// ============================================================
-// MINECRAFT START
-// ============================================================
-
-function startMinecraft() {
-
-    if (starting) {
-
-        console.log(
-            "[MC] Minecraft startet bereits."
-        );
-
-        return;
-    }
-
-    if (bot) {
-
-        console.log(
-            "[MC] Minecraft läuft bereits."
-        );
-
-        return;
-    }
-
-
-    starting =
-        true;
-
-    manualStop =
-        false;
-
-    routeRunning =
-        false;
-
-    startedAt =
-        Date.now();
-
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "        MINECRAFT START"
-    );
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "Account: " +
-        MC_USERNAME
-    );
-
-    console.log(
-        "Server: " +
-        MC_HOST
-    );
-
-    console.log(
-        "Port: " +
-        MC_PORT
-    );
-
-    console.log(
-        "Auth: " +
-        MC_AUTH
-    );
-
-    console.log(
-        "Auth Ordner: " +
-        MC_AUTH_DIR
-    );
-
-    console.log(
-        "Version: 1.8.9"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-
-    try {
-
-        bot =
-            mineflayer.createBot({
-
-                host:
-                    MC_HOST,
-
-                port:
-                    MC_PORT,
-
-                username:
-                    MC_USERNAME,
-
-                auth:
-                    MC_AUTH,
-
-                profilesFolder:
-                    MC_AUTH_DIR,
-
-                version:
-                    "1.8.9",
-
-                onMsaCode:
-                    data => {
-
-                        console.log("");
-                        console.log(
-                            "========================================"
-                        );
-                        console.log(
-                            "        MICROSOFT LOGIN"
-                        );
-                        console.log(
-                            "========================================"
-                        );
-
-                        if (
-                            data.verification_uri
-                        ) {
-
-                            console.log(
-                                "Login Seite: " +
-                                data.verification_uri
-                            );
-                        }
-
-                        if (
-                            data.user_code
-                        ) {
-
-                            console.log(
-                                "Code: " +
-                                data.user_code
-                            );
-                        }
-
-                        console.log(
-                            "========================================"
-                        );
-                    }
-            });
-
-
-        // ====================================================
-        // LOGIN
-        // ====================================================
-
-        bot.once(
-            "login",
-            async () => {
-
-                starting =
-                    false;
-
-                console.log(
-                    "Minecraft Login erfolgreich."
-                );
-
-                setLastAction(
-                    "Minecraft Login erfolgreich"
-                );
-
-                await updatePanel();
-            }
-        );
-
-
-        // ====================================================
-        // SPAWN
-        // ====================================================
-
-        bot.once(
-            "spawn",
-            async () => {
-
-                starting =
-                    false;
-
-                console.log(
-                    "Minecraft Spawn erfolgreich."
-                );
-
-                console.log(
-                    "Minecraft Bot ist jetzt im Spiel."
-                );
-
-                setLastAction(
-                    "Im Spiel"
-                );
-
-                await updatePanel();
-
-
-                await sleep(
-                    3000
-                );
-
-
-                if (
-                    bot &&
-                    !manualStop
-                ) {
-
-                    await startCB6Route();
-                }
-            }
-        );
-
-
-        // ====================================================
-        // CHAT
-        // ====================================================
-
-        bot.on(
-            "messagestr",
-            message => {
-
-                console.log(
-                    "[MC CHAT] " +
-                    message
-                );
-            }
-        );
-
-
-        // ====================================================
-        // KICK
-        // ====================================================
-
-        bot.on(
-            "kicked",
-            reason => {
-
-                console.log("");
-                console.log(
-                    "[MC] Bot wurde gekickt."
-                );
-
-                console.log(
-                    "[MC] Grund:"
-                );
-
-                console.log(
-                    reason
-                );
-
-                setLastAction(
-                    "Minecraft gekickt"
-                );
-
-                updatePanel();
-            }
-        );
-
-
-        // ====================================================
-        // ERROR
-        // ====================================================
-
-        bot.on(
-            "error",
-            error => {
-
-                console.error(
-                    "[MC ERROR]"
-                );
-
-                console.error(
-                    error
-                );
-
-                setLastAction(
-                    "Minecraft Fehler"
-                );
-
-                updatePanel();
-            }
-        );
-
-
-        // ====================================================
-        // END
-        // ====================================================
-
-        bot.on(
-            "end",
-            () => {
-
-                console.log(
-                    "[MC] Minecraft Verbindung beendet."
-                );
-
-                bot =
-                    null;
-
-                starting =
-                    false;
-
-                routeRunning =
-                    false;
-
-                setLastAction(
-                    "Minecraft Verbindung beendet"
-                );
-
-                updatePanel();
-            }
-        );
-
-
-    } catch (error) {
-
-        console.error(
-            "[MC ERROR] Minecraft konnte nicht gestartet werden."
-        );
-
-        console.error(
-            error
-        );
-
-        bot =
-            null;
-
-        starting =
-            false;
-
-        routeRunning =
-            false;
-
-        setLastAction(
-            "Minecraft Start fehlgeschlagen"
-        );
-
-        updatePanel();
-    }
-}
-
-
-// ============================================================
-// STOPP
-// ============================================================
-
-function stopMinecraft() {
-
-    manualStop =
-        true;
-
-    routeRunning =
-        false;
-
-    startedAt =
-        null;
-
-
-    if (bot) {
-
-        try {
-
-            bot.clearControlStates();
-
-            bot.quit(
-                "AFK Bot gestoppt"
-            );
-
-        } catch {}
-    }
-
-
-    bot =
-        null;
-
-    starting =
-        false;
-
-
-    setLastAction(
-        "AFK gestoppt"
-    );
-
-    updatePanel();
 }
 
 
@@ -1212,9 +1516,11 @@ discordClient.once(
         console.log(
             "========================================"
         );
+
         console.log(
             "        DISCORD BOT ONLINE"
         );
+
         console.log(
             "========================================"
         );
@@ -1241,13 +1547,16 @@ discordClient.once(
                     DISCORD_OWNER_ID
                 );
 
+
             const dm =
                 await owner.createDM();
+
 
             panelMessage =
                 await dm.send(
                     createPanel()
                 );
+
 
             console.log(
                 "[DISCORD] AFK Panel erstellt."
@@ -1306,7 +1615,7 @@ discordClient.on(
             await interaction.reply({
 
                 content:
-                    "Minecraft Bot wird gestartet und danach zum CB6 Portal bewegt.",
+                    "Minecraft Bot wird gestartet und die CB6 Route beginnt automatisch.",
 
                 flags:
                     MessageFlags.Ephemeral
@@ -1346,7 +1655,9 @@ discordClient.on(
         ) {
 
             const distance =
-                getDistanceToCB6();
+                getDistance(
+                    CB6_PORTAL
+                );
 
 
             await interaction.reply({
@@ -1410,7 +1721,10 @@ process.on(
     error => {
 
         console.error(
-            "[SYSTEM ERROR]",
+            "[SYSTEM ERROR]"
+        );
+
+        console.error(
             error
         );
     }
@@ -1422,7 +1736,10 @@ process.on(
     error => {
 
         console.error(
-            "[SYSTEM ERROR]",
+            "[SYSTEM ERROR]"
+        );
+
+        console.error(
             error
         );
     }
@@ -1488,7 +1805,10 @@ discordClient
         error => {
 
             console.error(
-                "[DISCORD ERROR]",
+                "[DISCORD ERROR] Login fehlgeschlagen."
+            );
+
+            console.error(
                 error
             );
 
