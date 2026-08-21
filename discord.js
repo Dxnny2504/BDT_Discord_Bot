@@ -1,827 +1,464 @@
 require("dotenv").config();
 
-const {
-    Client,
-    GatewayIntentBits,
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle
-} = require("discord.js");
-
 const fs = require("fs");
 const path = require("path");
-const {
-    spawn
-} = require("child_process");
+const mineflayer = require("mineflayer");
 
 // ============================================================
 // KONFIGURATION
 // ============================================================
 
-const DISCORD_TOKEN =
-    process.env.DISCORD_TOKEN;
+const MC_EMAIL =
+    process.env.MC_EMAIL ||
+    "r.guse858@gmail.com";
 
-const OWNER_ID =
-    process.env.DISCORD_OWNER_ID;
+const MC_HOST =
+    process.env.MC_HOST ||
+    "play.griefergames.net";
 
-const MINECRAFT_FILE =
-    path.join(
-        __dirname,
-        "index.js"
+const MC_PORT =
+    Number(
+        process.env.MC_PORT ||
+        25565
     );
 
-// ============================================================
-// DISCORD CLIENT
-// ============================================================
+const MC_AUTH =
+    "microsoft";
 
-const client =
-    new Client({
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent
-        ]
-    });
+const MC_AUTH_DIR =
+    path.join(
+        process.cwd(),
+        "minecraft-auth"
+    );
+
+const MC_VERSION =
+    "1.8.9";
 
 // ============================================================
 // STATUS
 // ============================================================
 
-let minecraftProcess =
+let bot =
     null;
 
-let activeAFK =
+let routeRunning =
     false;
 
-let currentPanelMessage =
-    null;
-
-let minecraftOutputBuffer =
-    "";
+let afkRunning =
+    true;
 
 // ============================================================
-// STARTUP
+// HILFSFUNKTION
 // ============================================================
 
-console.log("");
-console.log("========================================");
-console.log("        AFK DISCORD BOT");
-console.log("========================================");
-console.log("");
+function sleep(ms) {
 
-// ============================================================
-// DISCORD READY
-// ============================================================
-
-client.once(
-    "clientReady",
-    () => {
-
-        console.log(
-            "[DISCORD] Bot online: " +
-            client.user.tag
-        );
-
-        console.log(
-            "[DISCORD] Schreibe !afk"
-        );
-
-        console.log(
-            "[SYSTEM] Discord Verbindung aktiv."
-        );
-
-        console.log(
-            "[SYSTEM] Prozess bleibt aktiv."
-        );
-
-    }
-);
-
-// ============================================================
-// !AFK
-// ============================================================
-
-client.on(
-    "messageCreate",
-    async message => {
-
-        if (
-            message.author.bot
-        ) {
-            return;
-        }
-
-        if (
-            message.content
-                .trim()
-                .toLowerCase() !==
-            "!afk"
-        ) {
-            return;
-        }
-
-        if (
-            OWNER_ID &&
-            message.author.id !==
-            OWNER_ID
-        ) {
-            return;
-        }
-
-        console.log(
-            "[DISCORD] !afk empfangen."
-        );
-
-        try {
-
-            const panel =
-                await message.channel.send({
-                    embeds: [
-                        createAFKEmbed()
-                    ],
-                    components: [
-                        createAFKButtons()
-                    ]
-                });
-
-            currentPanelMessage =
-                panel;
-
-            console.log(
-                "[DISCORD] AFK Panel erstellt."
-            );
-
-        } catch (error) {
-
-            console.error(
-                "[DISCORD ERROR] Panel konnte nicht erstellt werden:"
-            );
-
-            console.error(
-                error
-            );
-
-        }
-
-    }
-);
-
-// ============================================================
-// BUTTONS
-// ============================================================
-
-client.on(
-    "interactionCreate",
-    async interaction => {
-
-        if (
-            !interaction.isButton()
-        ) {
-            return;
-        }
-
-        const customId =
-            interaction.customId;
-
-        console.log(
-            "[DISCORD] Button: " +
-            customId
-        );
-
-        if (
-            OWNER_ID &&
-            interaction.user.id !==
-            OWNER_ID
-        ) {
-
-            await interaction.reply({
-                content:
-                    "Keine Berechtigung.",
-                ephemeral:
-                    true
-            });
-
-            return;
-
-        }
-
-        // ====================================================
-        // START
-        // ====================================================
-
-        if (
-            customId ===
-            "afk_start"
-        ) {
-
-            console.log(
-                "[DISCORD] AFK Start gedrückt."
-            );
-
-            if (
-                activeAFK &&
-                minecraftProcess
-            ) {
-
-                await interaction.reply({
-                    content:
-                        "Der AFK Bot läuft bereits.",
-                    ephemeral:
-                        true
-                });
-
-                return;
-
-            }
-
-            await interaction.reply({
-                content:
-                    "Minecraft Bot wird gestartet.",
-                ephemeral:
-                    true
-            });
-
-            startMinecraft();
-
-            return;
-
-        }
-
-        // ====================================================
-        // STOP
-        // ====================================================
-
-        if (
-            customId ===
-            "afk_stop"
-        ) {
-
-            console.log(
-                "[DISCORD] AFK Stopp gedrückt."
-            );
-
-            stopMinecraft();
-
-            await interaction.reply({
-                content:
-                    "AFK Bot wurde gestoppt.",
-                ephemeral:
-                    true
-            });
-
-            return;
-
-        }
-
-        // ====================================================
-        // RECONNECT
-        // ====================================================
-
-        if (
-            customId ===
-            "afk_reconnect"
-        ) {
-
-            console.log(
-                "[DISCORD] Reconnect gedrückt."
-            );
-
-            stopMinecraft();
-
-            await interaction.reply({
-                content:
-                    "Minecraft wird neu gestartet.",
-                ephemeral:
-                    true
-            });
-
+    return new Promise(
+        resolve =>
             setTimeout(
-                () => {
+                resolve,
+                ms
+            )
+    );
 
-                    startMinecraft();
+}
 
-                },
-                1000
-            );
+// ============================================================
+// POSITION
+// ============================================================
 
-            return;
+function getPosition() {
 
-        }
+    if (
+        !bot ||
+        !bot.entity
+    ) {
 
-        // ====================================================
-        // POSITION
-        // ====================================================
-
-        if (
-            customId ===
-            "afk_position"
-        ) {
-
-            await interaction.reply({
-                content:
-                    "Die aktuelle Minecraft Position wird im Railway Log angezeigt.",
-                ephemeral:
-                    true
-            });
-
-            return;
-
-        }
-
-        // ====================================================
-        // REFRESH
-        // ====================================================
-
-        if (
-            customId ===
-            "afk_refresh"
-        ) {
-
-            await interaction.update({
-                embeds: [
-                    createAFKEmbed()
-                ],
-                components: [
-                    createAFKButtons()
-                ]
-            });
-
-            return;
-
-        }
+        return "Unbekannt";
 
     }
+
+    const position =
+        bot.entity.position;
+
+    return (
+        "X: " +
+        position.x.toFixed(2) +
+        " | Y: " +
+        position.y.toFixed(2) +
+        " | Z: " +
+        position.z.toFixed(2)
+    );
+
+}
+
+// ============================================================
+// AUTH ORDNER
+// ============================================================
+
+try {
+
+    fs.mkdirSync(
+        MC_AUTH_DIR,
+        {
+            recursive:
+                true
+        }
+    );
+
+    console.log(
+        "[SYSTEM] Microsoft Auth Speicher: " +
+        MC_AUTH_DIR
+    );
+
+} catch (error) {
+
+    console.error(
+        "[MC ERROR] Auth Ordner konnte nicht erstellt werden."
+    );
+
+    console.error(
+        error
+    );
+
+}
+
+// ============================================================
+// START
+// ============================================================
+
+console.log(
+    "========================================"
 );
 
-// ============================================================
-// AFK EMBED
-// ============================================================
+console.log(
+    "        GRIEFERGAMES AFK BOT"
+);
 
-function createAFKEmbed() {
+console.log(
+    "========================================"
+);
 
-    return new EmbedBuilder()
+console.log(
+    "[SYSTEM] Node: " +
+    process.version
+);
 
-        .setTitle(
-            "GRIEFERGAMES AFK BOT"
-        )
+console.log(
+    "[SYSTEM] Prozess: " +
+    process.pid
+);
 
-        .setDescription(
-            "Steuerung für den Minecraft AFK Bot"
-        )
+console.log(
+    "[SYSTEM] Minecraft Host: " +
+    MC_HOST
+);
 
-        .addFields(
+console.log(
+    "[SYSTEM] Minecraft Port: " +
+    MC_PORT
+);
 
-            {
-                name:
-                    "Status",
+console.log(
+    "[SYSTEM] Minecraft Version: " +
+    MC_VERSION
+);
 
-                value:
-                    minecraftProcess
-                        ? "ONLINE"
-                        : "OFFLINE",
+console.log(
+    "[MC] Account: " +
+    MC_EMAIL
+);
 
-                inline:
-                    true
-            },
+console.log(
+    "[MC] Auth: " +
+    MC_AUTH
+);
 
-            {
-                name:
-                    "Minecraft",
+console.log(
+    "[MC] Auth Speicher: " +
+    MC_AUTH_DIR
+);
 
-                value:
-                    activeAFK
-                        ? "Aktiv"
-                        : "Inaktiv",
+console.log(
+    "========================================"
+);
 
-                inline:
-                    true
-            },
+console.log(
+    "        AFK SESSION START"
+);
 
-            {
-                name:
-                    "Ablauf",
+console.log(
+    "========================================"
+);
 
-                value:
-                    "GrieferGames\n" +
-                    "/portal\n" +
-                    "CB6 Portal\n" +
-                    "12 Sekunden\n" +
-                    "/home 55",
-
-                inline:
-                    false
-            }
-
-        )
-
-        .setTimestamp();
-
-}
-
-// ============================================================
-// BUTTONS
-// ============================================================
-
-function createAFKButtons() {
-
-    return new ActionRowBuilder()
-
-        .addComponents(
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "afk_start"
-                )
-                .setLabel(
-                    "AFK Start"
-                )
-                .setStyle(
-                    ButtonStyle.Success
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "afk_stop"
-                )
-                .setLabel(
-                    "AFK Stopp"
-                )
-                .setStyle(
-                    ButtonStyle.Danger
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "afk_reconnect"
-                )
-                .setLabel(
-                    "Reconnect"
-                )
-                .setStyle(
-                    ButtonStyle.Primary
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "afk_position"
-                )
-                .setLabel(
-                    "Position"
-                )
-                .setStyle(
-                    ButtonStyle.Secondary
-                ),
-
-            new ButtonBuilder()
-                .setCustomId(
-                    "afk_refresh"
-                )
-                .setLabel(
-                    "Aktualisieren"
-                )
-                .setStyle(
-                    ButtonStyle.Secondary
-                )
-
-        );
-
-}
+console.log(
+    "[MC] Starte Minecraft Bot..."
+);
 
 // ============================================================
 // MINECRAFT START
 // ============================================================
 
-function startMinecraft() {
+try {
 
-    if (
-        activeAFK &&
-        minecraftProcess
-    ) {
+    bot =
+        mineflayer.createBot({
 
-        console.log(
-            "[MC] Minecraft läuft bereits."
-        );
+            host:
+                MC_HOST,
 
-        return;
+            port:
+                MC_PORT,
 
-    }
+            username:
+                MC_EMAIL,
 
-    if (
-        !fs.existsSync(
-            MINECRAFT_FILE
-        )
-    ) {
+            auth:
+                MC_AUTH,
 
-        console.error(
-            "[MC] index.js wurde nicht gefunden."
-        );
+            version:
+                MC_VERSION,
 
-        return;
-
-    }
-
-    activeAFK =
-        true;
-
-    minecraftOutputBuffer =
-        "";
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "        AFK SESSION START"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "[MC] Starte index.js..."
-    );
-
-    console.log(
-        "[MC] Datei: " +
-        MINECRAFT_FILE
-    );
-
-    try {
-
-        minecraftProcess =
-            spawn(
-                process.execPath,
-                [
-                    MINECRAFT_FILE
-                ],
-                {
-                    cwd:
-                        __dirname,
-
-                    env:
-                        process.env,
-
-                    stdio: [
-                        "ignore",
-                        "pipe",
-                        "pipe"
-                    ],
-
-                    windowsHide:
-                        true
-                }
-            );
-
-        console.log(
-            "[MC] Minecraft Prozess gestartet."
-        );
-
-        console.log(
-            "[MC] PID: " +
-            minecraftProcess.pid
-        );
-
-        // ====================================================
-        // STDOUT
-        // ====================================================
-
-        minecraftProcess.stdout.on(
-            "data",
-            data => {
-
-                const text =
-                    data.toString();
-
-                minecraftOutputBuffer +=
-                    text;
-
-                process.stdout.write(
-                    "[MC] " +
-                    text
-                );
-
-                updatePanel();
-
-            }
-        );
-
-        // ====================================================
-        // STDERR
-        // ====================================================
-
-        minecraftProcess.stderr.on(
-            "data",
-            data => {
-
-                const text =
-                    data.toString();
-
-                process.stderr.write(
-                    "[MC ERROR] " +
-                    text
-                );
-
-            }
-        );
-
-        // ====================================================
-        // PROCESS ERROR
-        // ====================================================
-
-        minecraftProcess.on(
-            "error",
-            error => {
-
-                console.error(
-                    "[MC ERROR] Minecraft Prozess konnte nicht gestartet werden:"
-                );
-
-                console.error(
-                    error
-                );
-
-                activeAFK =
-                    false;
-
-                minecraftProcess =
-                    null;
-
-                updatePanel();
-
-            }
-        );
-
-        // ====================================================
-        // PROCESS CLOSE
-        // ====================================================
-
-        minecraftProcess.on(
-            "close",
-            (
-                code,
-                signal
-            ) => {
-
-                console.log("");
-                console.log(
-                    "[MC] Minecraft Prozess beendet."
-                );
-
-                console.log(
-                    "[MC] Code: " +
-                    code
-                );
-
-                console.log(
-                    "[MC] Signal: " +
-                    signal
-                );
-
-                activeAFK =
-                    false;
-
-                minecraftProcess =
-                    null;
-
-                minecraftOutputBuffer =
-                    "";
-
-                updatePanel();
-
-            }
-        );
-
-    } catch (error) {
-
-        console.error(
-            "[MC ERROR] Minecraft Prozess konnte nicht gestartet werden:"
-        );
-
-        console.error(
-            error
-        );
-
-        activeAFK =
-            false;
-
-        minecraftProcess =
-            null;
-
-    }
-
-}
-
-// ============================================================
-// MINECRAFT STOPPEN
-// ============================================================
-
-function stopMinecraft() {
-
-    console.log("");
-    console.log(
-        "========================================"
-    );
-
-    console.log(
-        "        MINECRAFT BOT BEENDEN"
-    );
-
-    console.log(
-        "========================================"
-    );
-
-    if (
-        !minecraftProcess
-    ) {
-
-        console.log(
-            "[MC] Kein Minecraft Prozess läuft."
-        );
-
-        activeAFK =
-            false;
-
-        updatePanel();
-
-        return;
-
-    }
-
-    const pid =
-        minecraftProcess.pid;
-
-    console.log(
-        "[MC] PID: " +
-        pid
-    );
-
-    try {
-
-        minecraftProcess.kill(
-            "SIGTERM"
-        );
-
-        console.log(
-            "[MC] Minecraft Prozess beendet."
-        );
-
-    } catch (error) {
-
-        console.error(
-            "[MC ERROR] Fehler beim Beenden:"
-        );
-
-        console.error(
-            error
-        );
-
-    }
-
-    activeAFK =
-        false;
-
-    minecraftProcess =
-        null;
-
-    updatePanel();
-
-}
-
-// ============================================================
-// PANEL AKTUALISIEREN
-// ============================================================
-
-async function updatePanel() {
-
-    if (
-        !currentPanelMessage
-    ) {
-
-        return;
-
-    }
-
-    try {
-
-        await currentPanelMessage.edit({
-
-            embeds: [
-                createAFKEmbed()
-            ],
-
-            components: [
-                createAFKButtons()
-            ]
+            profilesFolder:
+                MC_AUTH_DIR
 
         });
 
-    } catch (error) {
+} catch (error) {
+
+    console.error(
+        "[MC ERROR] Minecraft konnte nicht gestartet werden."
+    );
+
+    console.error(
+        error
+    );
+
+    process.exit(
+        1
+    );
+
+}
+
+// ============================================================
+// LOGIN
+// ============================================================
+
+bot.once(
+    "login",
+    () => {
+
+        console.log(
+            "[MC] Minecraft Login erfolgreich."
+        );
+
+    }
+);
+
+// ============================================================
+// SPAWN
+// ============================================================
+
+bot.once(
+    "spawn",
+    async () => {
+
+        console.log(
+            "[MC CHAT] Dxnny858 joined the game"
+        );
+
+        console.log(
+            "[MC] Minecraft Spawn erfolgreich."
+        );
+
+        console.log(
+            "[MC] Minecraft Bot ist jetzt auf dem Server."
+        );
+
+        console.log(
+            "[MC] Position: " +
+            getPosition()
+        );
+
+        await sleep(
+            3000
+        );
+
+        if (
+            bot &&
+            afkRunning
+        ) {
+
+            await startCB6Route();
+
+        }
+
+    }
+);
+
+// ============================================================
+// CHAT
+// ============================================================
+
+bot.on(
+    "messagestr",
+    message => {
+
+        console.log(
+            "[MC CHAT] " +
+            message
+        );
+
+    }
+);
+
+// ============================================================
+// KICK
+// ============================================================
+
+bot.on(
+    "kicked",
+    reason => {
+
+        console.log(
+            "[MC] Bot wurde gekickt."
+        );
+
+        console.log(
+            "[MC] Grund:"
+        );
+
+        console.log(
+            reason
+        );
+
+    }
+);
+
+// ============================================================
+// FEHLER
+// ============================================================
+
+bot.on(
+    "error",
+    error => {
 
         console.error(
-            "[DISCORD] Panel konnte nicht aktualisiert werden."
+            "[MC ERROR]"
+        );
+
+        console.error(
+            error
+        );
+
+    }
+);
+
+// ============================================================
+// VERBINDUNG ENDE
+// ============================================================
+
+bot.on(
+    "end",
+    () => {
+
+        console.log(
+            "[MC] Minecraft Verbindung beendet."
+        );
+
+        process.exit(
+            0
+        );
+
+    }
+);
+
+// ============================================================
+// NORDEN
+// ============================================================
+
+async function lookNorth() {
+
+    if (!bot) {
+
+        return;
+
+    }
+
+    console.log(
+        "[ROUTE] Drehe nach Norden."
+    );
+
+    await bot.look(
+        0,
+        0,
+        true
+    );
+
+    await sleep(
+        500
+    );
+
+    console.log(
+        "[ROUTE] Blickrichtung gesetzt."
+    );
+
+}
+
+// ============================================================
+// BEWEGUNG
+// ============================================================
+
+async function moveForward(
+    duration
+) {
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    bot.setControlState(
+        "forward",
+        true
+    );
+
+    bot.setControlState(
+        "sprint",
+        true
+    );
+
+    const start =
+        Date.now();
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() -
+        start <
+        duration
+    ) {
+
+        await sleep(
+            50
+        );
+
+    }
+
+    if (bot) {
+
+        bot.setControlState(
+            "forward",
+            false
+        );
+
+        bot.setControlState(
+            "sprint",
+            false
         );
 
     }
@@ -829,87 +466,342 @@ async function updatePanel() {
 }
 
 // ============================================================
-// DISCORD LOGIN
+// STOPP BEWEGUNG
 // ============================================================
 
-console.log(
-    "[SYSTEM] Starte Discord Login..."
-);
+function stopMovement() {
 
-client
-    .login(
-        DISCORD_TOKEN
-    )
-    .catch(
-        error => {
+    if (!bot) {
 
-            console.error(
-                "[DISCORD ERROR] Login fehlgeschlagen:"
-            );
+        return;
 
-            console.error(
-                error
-            );
+    }
 
-            process.exit(
-                1
-            );
+    try {
 
-        }
+        bot.clearControlStates();
+
+        bot.setControlState(
+            "forward",
+            false
+        );
+
+        bot.setControlState(
+            "back",
+            false
+        );
+
+        bot.setControlState(
+            "left",
+            false
+        );
+
+        bot.setControlState(
+            "right",
+            false
+        );
+
+        bot.setControlState(
+            "jump",
+            false
+        );
+
+        bot.setControlState(
+            "sprint",
+            false
+        );
+
+    } catch {}
+
+}
+
+// ============================================================
+// SPRUNG
+// ============================================================
+
+async function jump() {
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    console.log(
+        "[ROUTE] Springe über die Kante..."
     );
 
+    bot.setControlState(
+        "jump",
+        true
+    );
+
+    await sleep(
+        350
+    );
+
+    if (bot) {
+
+        bot.setControlState(
+            "jump",
+            false
+        );
+
+    }
+
+}
+
 // ============================================================
-// PANEL UPDATE TIMER
+// CB6 ROUTE
 // ============================================================
 
-setInterval(
-    () => {
+async function startCB6Route() {
+
+    if (
+        !bot ||
+        routeRunning
+    ) {
+
+        return;
+
+    }
+
+    routeRunning =
+        true;
+
+    console.log("");
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        CB6 ROUTE"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    // ========================================================
+    // PORTAL
+    // ========================================================
+
+    console.log(
+        "[ROUTE] Sende /portal..."
+    );
+
+    bot.chat(
+        "/portal"
+    );
+
+    await sleep(
+        4000
+    );
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    console.log(
+        "[ROUTE] Portalbereich erreicht."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    // ========================================================
+    // NORDEN
+    // ========================================================
+
+    await lookNorth();
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    // ========================================================
+    // ERSTER WEG
+    // ========================================================
+
+    console.log(
+        "[ROUTE] Starte festen Weg über die Kante."
+    );
+
+    await moveForward(
+        900
+    );
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    console.log(
+        "[ROUTE] Kante erreicht."
+    );
+
+    // ========================================================
+    // SPRUNG
+    // ========================================================
+
+    await jump();
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    // ========================================================
+    // ÜBER DIE KANTE
+    // ========================================================
+
+    await moveForward(
+        850
+    );
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    stopMovement();
+
+    console.log(
+        "[ROUTE] Kante überquert."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    await sleep(
+        500
+    );
+
+    // ========================================================
+    // ENDLAUF
+    // ========================================================
+
+    console.log(
+        "[ROUTE] Endlauf zum CB6 Portal."
+    );
+
+    await moveForward(
+        900
+    );
+
+    stopMovement();
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+
+    }
+
+    console.log(
+        "[ROUTE] CB6 Portal erreicht."
+    );
+
+    console.log(
+        "[ROUTE] Position: " +
+        getPosition()
+    );
+
+    // ========================================================
+    // 12 SEKUNDEN
+    // ========================================================
+
+    console.log(
+        "[ROUTE] Warte 12 Sekunden."
+    );
+
+    for (
+        let i = 12;
+        i >= 1;
+        i--
+    ) {
+
+        console.log(
+            "[ROUTE] Noch " +
+            i +
+            " Sekunden."
+        );
+
+        await sleep(
+            1000
+        );
 
         if (
-            currentPanelMessage
+            !bot ||
+            !routeRunning
         ) {
 
-            updatePanel();
+            return;
 
         }
 
-    },
-    5000
-);
-
-// ============================================================
-// SYSTEM FEHLER
-// ============================================================
-
-process.on(
-    "uncaughtException",
-    error => {
-
-        console.error(
-            "[SYSTEM ERROR] Uncaught Exception:"
-        );
-
-        console.error(
-            error
-        );
-
     }
-);
 
-process.on(
-    "unhandledRejection",
-    error => {
+    console.log(
+        "[ROUTE] 12 Sekunden vorbei."
+    );
 
-        console.error(
-            "[SYSTEM ERROR] Unhandled Rejection:"
-        );
+    // ========================================================
+    // HOME
+    // ========================================================
 
-        console.error(
-            error
-        );
+    console.log(
+        "[ROUTE] Sende /home 55."
+    );
 
-    }
-);
+    bot.chat(
+        "/home 55"
+    );
+
+    console.log(
+        "[ROUTE] /home 55 gesendet."
+    );
+
+    routeRunning =
+        false;
+
+    console.log(
+        "[ROUTE] CB6 Ablauf abgeschlossen."
+    );
+
+}
 
 // ============================================================
 // SHUTDOWN
@@ -919,9 +811,29 @@ process.on(
     "SIGTERM",
     () => {
 
-        stopMinecraft();
+        console.log(
+            "[SYSTEM] SIGTERM erhalten."
+        );
 
-        client.destroy();
+        afkRunning =
+            false;
+
+        routeRunning =
+            false;
+
+        stopMovement();
+
+        if (bot) {
+
+            try {
+
+                bot.quit(
+                    "AFK Bot beendet"
+                );
+
+            } catch {}
+
+        }
 
         process.exit(
             0
@@ -934,9 +846,29 @@ process.on(
     "SIGINT",
     () => {
 
-        stopMinecraft();
+        console.log(
+            "[SYSTEM] SIGINT erhalten."
+        );
 
-        client.destroy();
+        afkRunning =
+            false;
+
+        routeRunning =
+            false;
+
+        stopMovement();
+
+        if (bot) {
+
+            try {
+
+                bot.quit(
+                    "AFK Bot beendet"
+                );
+
+            } catch {}
+
+        }
 
         process.exit(
             0
