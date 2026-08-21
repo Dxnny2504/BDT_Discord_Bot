@@ -46,7 +46,7 @@ const MC_PORT =
 
 
 // ============================================================
-// PRÜFUNG
+// VARIABLEN PRÜFEN
 // ============================================================
 
 function checkEnvironment() {
@@ -94,7 +94,7 @@ checkEnvironment();
 
 
 // ============================================================
-// AUTH
+// AUTH ORDNER
 // ============================================================
 
 try {
@@ -114,9 +114,10 @@ try {
 } catch (error) {
 
     console.error(
-        "[AUTH ERROR]",
-        error
+        "[AUTH ERROR] Auth Ordner konnte nicht erstellt werden."
     );
+
+    console.error(error);
 
     process.exit(1);
 }
@@ -147,6 +148,10 @@ let routeRunning = false;
 
 let teleportWaiting = false;
 
+let cooldownActive = false;
+
+let portalRetryRunning = false;
+
 let panelMessage = null;
 
 let startedAt = null;
@@ -161,8 +166,6 @@ let manualStop = false;
 // ZIEL
 // ============================================================
 
-// Das eigentliche Ziel im Portalraum
-
 const PORTAL_TARGET = {
     x: 307,
     y: 67,
@@ -170,22 +173,10 @@ const PORTAL_TARGET = {
 };
 
 
-// Kante, an der gesprungen werden soll
+// Position, bei der wir über die Kante springen
 
-const JUMP_POINT = {
-    x: 312.0,
-    y: 67,
-    z: 276.5
-};
-
-
-// erwartete Position nach CB6 Teleport
-
-const CB6_POSITION = {
-    x: 215,
-    y: 67,
-    z: 371
-};
+const JUMP_POINT_X =
+    312.0;
 
 
 // ============================================================
@@ -370,12 +361,10 @@ function stopMovement() {
 
 
 // ============================================================
-// BLICKRICHTUNG
+// ZIELBLICK
 // ============================================================
 
-async function lookAtTarget(
-    target
-) {
+async function lookAtTarget(target) {
 
     if (!bot) {
         return false;
@@ -448,7 +437,262 @@ async function lookAtTarget(
 
 
 // ============================================================
-// DURCH PORTALRAUM LAUFEN
+// ERNEUT INS PORTAL LAUFEN
+// ============================================================
+
+async function retryPortalEntry() {
+
+    if (
+        !bot ||
+        !routeRunning ||
+        portalRetryRunning
+    ) {
+
+        return;
+    }
+
+    portalRetryRunning =
+        true;
+
+    cooldownActive =
+        false;
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        PORTAL ERNEUT BETRETEN"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    setLastAction(
+        "Betrete CB6 Portal erneut"
+    );
+
+
+    await updatePanel();
+
+
+    if (!bot) {
+
+        portalRetryRunning =
+            false;
+
+        return;
+    }
+
+
+    // Wir schauen leicht in Richtung des eigentlichen Portals
+
+    await lookAtTarget(
+        PORTAL_TARGET
+    );
+
+
+    if (!bot) {
+
+        portalRetryRunning =
+            false;
+
+        return;
+    }
+
+
+    console.log(
+        "[PORTAL] Laufe erneut ins Portal."
+    );
+
+
+    bot.setControlState(
+        "forward",
+        true
+    );
+
+
+    bot.setControlState(
+        "sprint",
+        false
+    );
+
+
+    const start =
+        Date.now();
+
+    const timeout =
+        2500;
+
+
+    while (
+        bot &&
+        routeRunning &&
+        Date.now() -
+        start <
+        timeout
+    ) {
+
+        console.log(
+            "[PORTAL] Position: " +
+            getPosition()
+        );
+
+        await sleep(
+            200
+        );
+    }
+
+
+    stopMovement();
+
+
+    portalRetryRunning =
+        false;
+
+
+    if (!bot) {
+        return;
+    }
+
+
+    console.log(
+        "[PORTAL] Erneuter Portaleintritt beendet."
+    );
+
+
+    setLastAction(
+        "Warte auf CB6 Teleport"
+    );
+
+
+    teleportWaiting =
+        true;
+
+
+    await updatePanel();
+}
+
+
+// ============================================================
+// 12 SEKUNDEN COOLDOWN
+// ============================================================
+
+async function handleTeleportCooldown() {
+
+    if (
+        !bot ||
+        !routeRunning ||
+        cooldownActive
+    ) {
+
+        return;
+    }
+
+
+    cooldownActive =
+        true;
+
+    teleportWaiting =
+        false;
+
+
+    stopMovement();
+
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "        TELEPORT COOLDOWN"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        "[PORTAL] GrieferGames verlangt 12 Sekunden."
+    );
+
+    console.log(
+        "[PORTAL] Bot bleibt stehen."
+    );
+
+
+    setLastAction(
+        "12 Sekunden Teleport Cooldown"
+    );
+
+
+    await updatePanel();
+
+
+    for (
+        let seconds = 12;
+        seconds > 0;
+        seconds--
+    ) {
+
+        if (
+            !bot ||
+            !routeRunning ||
+            manualStop
+        ) {
+
+            return;
+        }
+
+
+        console.log(
+            "[PORTAL] Warte noch " +
+            seconds +
+            " Sekunden."
+        );
+
+
+        setLastAction(
+            "Teleport Cooldown: " +
+            seconds +
+            "s"
+        );
+
+
+        await updatePanel();
+
+
+        await sleep(
+            1000
+        );
+    }
+
+
+    if (
+        !bot ||
+        !routeRunning
+    ) {
+
+        return;
+    }
+
+
+    console.log(
+        "[PORTAL] Cooldown vorbei."
+    );
+
+
+    await retryPortalEntry();
+}
+
+
+// ============================================================
+// PORTAL ROUTE
 // ============================================================
 
 async function runPortalRoute() {
@@ -461,21 +705,26 @@ async function runPortalRoute() {
         return false;
     }
 
+
     console.log("");
-    console.log(
-        "========================================"
-    );
-    console.log(
-        "        PORTAL ROUTE"
-    );
     console.log(
         "========================================"
     );
 
     console.log(
+        "        PORTAL ROUTE"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    console.log(
         "[ROUTE] Startposition: " +
         getPosition()
     );
+
 
     console.log(
         "[ROUTE] Ziel: X 307 | Y 67 | Z 276"
@@ -483,12 +732,13 @@ async function runPortalRoute() {
 
 
     // ========================================================
-    // ZIEL AUSRICHTEN
+    // AUF ZIEL AUSRICHTEN
     // ========================================================
 
     setLastAction(
         "Richte auf 307 / 67 / 276"
     );
+
 
     await lookAtTarget(
         PORTAL_TARGET
@@ -511,6 +761,7 @@ async function runPortalRoute() {
     console.log(
         "[ROUTE] Laufe zum Portal."
     );
+
 
     setLastAction(
         "Laufe zum CB6 Portal"
@@ -554,17 +805,18 @@ async function runPortalRoute() {
 
 
         // ====================================================
-        // SPRUNG AN DER KANTE
+        // SPRUNG
         // ====================================================
 
         if (
             !jumped &&
             position.x <=
-            JUMP_POINT.x
+            JUMP_POINT_X
         ) {
 
             jumped =
                 true;
+
 
             console.log("");
             console.log(
@@ -579,10 +831,12 @@ async function runPortalRoute() {
                 "========================================"
             );
 
+
             console.log(
                 "[ROUTE] Position: " +
                 getPosition()
             );
+
 
             console.log(
                 "[ROUTE] Springe über die Kante."
@@ -607,16 +861,11 @@ async function runPortalRoute() {
                     false
                 );
             }
-
-
-            console.log(
-                "[ROUTE] Sprung abgeschlossen."
-            );
         }
 
 
         // ====================================================
-        // ZIELPRÜFUNG
+        // ZIELBEREICH
         // ====================================================
 
         const distance =
@@ -653,6 +902,7 @@ async function runPortalRoute() {
                 distance.toFixed(3)
             );
 
+
             break;
         }
 
@@ -670,10 +920,12 @@ async function runPortalRoute() {
             lastLog =
                 Date.now();
 
+
             console.log(
                 "[ROUTE] Position: " +
                 getPosition()
             );
+
 
             if (
                 distance !== null
@@ -693,8 +945,8 @@ async function runPortalRoute() {
     }
 
 
-    // Bewegung absichtlich noch NICHT sofort beenden,
-    // damit der Bot wirklich durch das Portal läuft.
+    stopMovement();
+
 
     if (
         !bot ||
@@ -705,60 +957,8 @@ async function runPortalRoute() {
     }
 
 
-    // ========================================================
-    // PORTAL DURCHLAUF
-    // ========================================================
-
     console.log(
-        "[ROUTE] Laufe weiter durch das Portal."
-    );
-
-    setLastAction(
-        "Laufe durch das CB6 Portal"
-    );
-
-
-    const portalStart =
-        Date.now();
-
-
-    const portalTimeout =
-        2500;
-
-
-    while (
-        bot &&
-        routeRunning &&
-        Date.now() -
-        portalStart <
-        portalTimeout
-    ) {
-
-        console.log(
-            "[ROUTE] Portal: " +
-            getPosition()
-        );
-
-        await sleep(
-            200
-        );
-    }
-
-
-    stopMovement();
-
-
-    if (!bot) {
-        return false;
-    }
-
-
-    console.log(
-        "[ROUTE] Portalbereich durchquert."
-    );
-
-    console.log(
-        "[ROUTE] Position: " +
+        "[ROUTE] Position nach Portalbewegung: " +
         getPosition()
     );
 
@@ -768,7 +968,7 @@ async function runPortalRoute() {
 
 
     setLastAction(
-        "Warte auf CB6 Teleport"
+        "Warte auf Portalantwort"
     );
 
 
@@ -780,7 +980,7 @@ async function runPortalRoute() {
 
 
 // ============================================================
-// TELEPORT ERKENNEN
+// TELEPORT NACH CB6
 // ============================================================
 
 async function waitForCB6Teleport() {
@@ -788,6 +988,7 @@ async function waitForCB6Teleport() {
     if (!bot) {
         return false;
     }
+
 
     console.log("");
     console.log(
@@ -807,17 +1008,11 @@ async function waitForCB6Teleport() {
         bot.entity.position.clone();
 
 
-    console.log(
-        "[ROUTE] Startposition vor Teleport: " +
-        getPosition()
-    );
-
-
     const start =
         Date.now();
 
     const timeout =
-        15000;
+        20000;
 
 
     while (
@@ -845,7 +1040,7 @@ async function waitForCB6Teleport() {
             startPosition.z;
 
 
-        const movement =
+        const moved =
             Math.sqrt(
                 dx * dx +
                 dy * dy +
@@ -854,7 +1049,7 @@ async function waitForCB6Teleport() {
 
 
         if (
-            movement >=
+            moved >=
             20
         ) {
 
@@ -870,6 +1065,7 @@ async function waitForCB6Teleport() {
             console.log(
                 "========================================"
             );
+
 
             console.log(
                 "[ROUTE] Neue Position: " +
@@ -957,7 +1153,7 @@ async function waitForCB6Teleport() {
 
 
 // ============================================================
-// KOMPLETTE CB6 ROUTE
+// KOMPLETTE ROUTE
 // ============================================================
 
 async function startCB6Route() {
@@ -975,6 +1171,9 @@ async function startCB6Route() {
         true;
 
     teleportWaiting =
+        false;
+
+    cooldownActive =
         false;
 
 
@@ -1056,9 +1255,6 @@ async function startCB6Route() {
         routeRunning =
             false;
 
-        teleportWaiting =
-            false;
-
 
         setLastAction(
             "Portalroute fehlgeschlagen"
@@ -1073,10 +1269,77 @@ async function startCB6Route() {
 
 
     // ========================================================
-    // TELEPORT
+    // WARTEN
     // ========================================================
 
     await waitForCB6Teleport();
+}
+
+
+// ============================================================
+// CHAT ÜBERWACHUNG
+// ============================================================
+
+function setupMinecraftChatHandlers() {
+
+    if (!bot) {
+        return;
+    }
+
+
+    bot.on(
+        "messagestr",
+        async message => {
+
+            console.log(
+                "[MC CHAT] " +
+                message
+            );
+
+
+            const text =
+                String(message)
+                    .replace(
+                        /§[0-9a-fk-or]/gi,
+                        ""
+                    )
+                    .trim();
+
+
+            // ==================================================
+            // 12 SEKUNDEN COOLDOWN
+            // ==================================================
+
+            if (
+                text.includes(
+                    "Bitte warte 12 Sekunden zwischen jedem Teleport"
+                )
+            ) {
+
+                await handleTeleportCooldown();
+
+                return;
+            }
+
+
+            // ==================================================
+            // PORTALRAUM
+            // ==================================================
+
+            if (
+                text.includes(
+                    "Du bist im Portalraum"
+                )
+            ) {
+
+                console.log(
+                    "[MC CHAT] Portalraum bestätigt."
+                );
+
+                return;
+            }
+        }
+    );
 }
 
 
@@ -1116,6 +1379,12 @@ function startMinecraft() {
         false;
 
     teleportWaiting =
+        false;
+
+    cooldownActive =
+        false;
+
+    portalRetryRunning =
         false;
 
     startedAt =
@@ -1240,6 +1509,9 @@ function startMinecraft() {
             });
 
 
+        setupMinecraftChatHandlers();
+
+
         // ====================================================
         // LOGIN
         // ====================================================
@@ -1251,13 +1523,16 @@ function startMinecraft() {
                 starting =
                     false;
 
+
                 console.log(
                     "Minecraft Login erfolgreich."
                 );
 
+
                 setLastAction(
                     "Minecraft Login erfolgreich"
                 );
+
 
                 await updatePanel();
             }
@@ -1275,17 +1550,21 @@ function startMinecraft() {
                 starting =
                     false;
 
+
                 console.log(
                     "Minecraft Spawn erfolgreich."
                 );
+
 
                 console.log(
                     "Minecraft Bot ist jetzt im Spiel."
                 );
 
+
                 setLastAction(
                     "Im Spiel"
                 );
+
 
                 await updatePanel();
 
@@ -1307,22 +1586,6 @@ function startMinecraft() {
 
 
         // ====================================================
-        // CHAT
-        // ====================================================
-
-        bot.on(
-            "messagestr",
-            message => {
-
-                console.log(
-                    "[MC CHAT] " +
-                    message
-                );
-            }
-        );
-
-
-        // ====================================================
         // KICK
         // ====================================================
 
@@ -1334,17 +1597,21 @@ function startMinecraft() {
                     "[MC] Bot wurde gekickt."
                 );
 
+
                 console.log(
                     "[MC] Grund:"
                 );
+
 
                 console.log(
                     reason
                 );
 
+
                 setLastAction(
                     "Minecraft gekickt"
                 );
+
 
                 updatePanel();
             }
@@ -1363,13 +1630,16 @@ function startMinecraft() {
                     "[MC ERROR]"
                 );
 
+
                 console.error(
                     error
                 );
 
+
                 setLastAction(
                     "Minecraft Fehler"
                 );
+
 
                 updatePanel();
             }
@@ -1388,6 +1658,7 @@ function startMinecraft() {
                     "[MC] Minecraft Verbindung beendet."
                 );
 
+
                 bot =
                     null;
 
@@ -1400,9 +1671,17 @@ function startMinecraft() {
                 teleportWaiting =
                     false;
 
+                cooldownActive =
+                    false;
+
+                portalRetryRunning =
+                    false;
+
+
                 setLastAction(
                     "Minecraft Verbindung beendet"
                 );
+
 
                 updatePanel();
             }
@@ -1415,9 +1694,11 @@ function startMinecraft() {
             "[MC ERROR] Minecraft konnte nicht gestartet werden."
         );
 
+
         console.error(
             error
         );
+
 
         bot =
             null;
@@ -1428,12 +1709,11 @@ function startMinecraft() {
         routeRunning =
             false;
 
-        teleportWaiting =
-            false;
 
         setLastAction(
             "Minecraft Start fehlgeschlagen"
         );
+
 
         updatePanel();
     }
@@ -1441,7 +1721,7 @@ function startMinecraft() {
 
 
 // ============================================================
-// STOPP
+// MINECRAFT STOPP
 // ============================================================
 
 function stopMinecraft() {
@@ -1453,6 +1733,12 @@ function stopMinecraft() {
         false;
 
     teleportWaiting =
+        false;
+
+    cooldownActive =
+        false;
+
+    portalRetryRunning =
         false;
 
     startedAt =
@@ -1572,6 +1858,15 @@ function createPanel() {
                 },
 
                 {
+                    name: "Cooldown",
+                    value:
+                        cooldownActive
+                            ? "🟡 Aktiv"
+                            : "⚪ Nein",
+                    inline: true
+                },
+
+                {
                     name: "Laufzeit",
                     value:
                         getRuntime(),
@@ -1636,7 +1931,6 @@ function createPanel() {
                     .setStyle(
                         ButtonStyle.Secondary
                     )
-
             );
 
 
@@ -1660,6 +1954,7 @@ async function updatePanel() {
     if (!panelMessage) {
         return;
     }
+
 
     try {
 
@@ -1697,15 +1992,18 @@ discordClient.once(
             "========================================"
         );
 
+
         console.log(
             "Bot: " +
             discordClient.user.tag
         );
 
+
         console.log(
             "Owner ID: " +
             DISCORD_OWNER_ID
         );
+
 
         console.log(
             "========================================"
@@ -1719,13 +2017,16 @@ discordClient.once(
                     DISCORD_OWNER_ID
                 );
 
+
             const dm =
                 await owner.createDM();
+
 
             panelMessage =
                 await dm.send(
                     createPanel()
                 );
+
 
             console.log(
                 "[DISCORD] AFK Panel erstellt."
@@ -1743,7 +2044,7 @@ discordClient.once(
 
 
 // ============================================================
-// BUTTONS
+// DISCORD BUTTONS
 // ============================================================
 
 discordClient.on(
@@ -1776,6 +2077,10 @@ discordClient.on(
         }
 
 
+        // ====================================================
+        // START
+        // ====================================================
+
         if (
             interaction.customId ===
             "afk_start"
@@ -1796,6 +2101,10 @@ discordClient.on(
             return;
         }
 
+
+        // ====================================================
+        // STOPP
+        // ====================================================
 
         if (
             interaction.customId ===
@@ -1818,6 +2127,10 @@ discordClient.on(
         }
 
 
+        // ====================================================
+        // POSITION
+        // ====================================================
+
         if (
             interaction.customId ===
             "afk_position"
@@ -1839,6 +2152,10 @@ discordClient.on(
         }
 
 
+        // ====================================================
+        // AKTUALISIEREN
+        // ====================================================
+
         if (
             interaction.customId ===
             "afk_refresh"
@@ -1855,15 +2172,13 @@ discordClient.on(
 
 
 // ============================================================
-// AUTO UPDATE
+// PANEL AUTO UPDATE
 // ============================================================
 
 setInterval(
     () => {
 
-        if (
-            panelMessage
-        ) {
+        if (panelMessage) {
 
             updatePanel();
         }
@@ -1874,7 +2189,7 @@ setInterval(
 
 
 // ============================================================
-// FEHLER
+// SYSTEM FEHLER
 // ============================================================
 
 process.on(
