@@ -1,6 +1,5 @@
 {
   "name": "minecraft-afk-discord-bot",
-  "version": "1.0.0",
   "description": "Discord Steuerung fuer einen Minecraft Account",
   "main": "index.js",
   "scripts": {
